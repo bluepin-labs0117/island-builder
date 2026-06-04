@@ -33,8 +33,8 @@ export function createCamera() {
     0.1,
     1000
   );
-  // 島（原点）を斜め上から見下ろす位置（広い地形に合わせて少し引く）
-  camera.position.set(28, 24, 28);
+  // 島（原点）を斜め上から見下ろす位置（初期の島が大きく見える距離）
+  camera.position.set(21, 17, 21);
   camera.lookAt(0, 0, 0);
   return camera;
 }

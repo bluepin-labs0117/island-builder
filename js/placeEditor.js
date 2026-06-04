@@ -7,8 +7,10 @@
 
 import * as THREE from 'three';
 
-const TAP_MOVE = 10; // これ以上動いたらドラッグ扱い(px)
-const TAP_TIME = 500; // これ以上長押しならタップ扱いにしない(ms)
+const TAP_MOVE = 14; // これ以上動いたらドラッグ扱い(px)
+const TAP_TIME = 600; // これ以上長押しならタップ扱いにしない(ms)
+const WATER_LEVEL = 0; // 水面の高さ。これより下（海）には設置しない
+const PLACE_MIN_Y = -0.15; // 砂浜ぎりぎりまでは許可（少しだけ水際を含める）
 
 /**
  * @param {object} deps
@@ -71,25 +73,50 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
     setNDCFrom(clientX, clientY);
     ray.setFromCamera(ndc, camera);
 
-    // まず既存オブジェクトを拾う → 選択
-    const hit = objects.pick(ray);
-    if (hit) {
-      selected = { type: hit.type, index: hit.index };
-      showRingAt(selected);
-      ui.setSelected(true);
-      return;
-    }
+    try {
+      // まず既存オブジェクトを拾う → 選択
+      const hit = objects.pick(ray);
+      if (hit) {
+        console.log('[place] オブジェクトを選択:', hit.type, 'index=', hit.index);
+        selected = { type: hit.type, index: hit.index };
+        showRingAt(selected);
+        ui.setSelected(true);
+        return;
+      }
 
-    // 地面なら設置（選択は解除）
-    const groundHits = ray.intersectObject(terrain.mesh, false);
-    if (!groundHits.length) return;
-    const p = groundHits[0].point;
-    const ok = objects.place(palette, p.x, p.z);
-    if (!ok) {
-      ui.toast(`設置できる数の上限（${objects.MAX}個）に達しました`);
-      return;
+      // 地面へのレイキャスト
+      const groundHits = ray.intersectObject(terrain.mesh, false);
+      if (!groundHits.length) {
+        console.log('[place] 地形にヒットなし（何も置けません）');
+        return;
+      }
+
+      const p = groundHits[0].point;
+      console.log(
+        '[place] 地形ヒット: x=%s y=%s z=%s（選択中=%s）',
+        p.x.toFixed(2),
+        p.y.toFixed(2),
+        p.z.toFixed(2),
+        palette
+      );
+
+      // 海（水面下）には置かない＝置いても水面板に隠れて見えないため
+      if (p.y < PLACE_MIN_Y) {
+        console.log('[place] 海の上なので設置しません (y < %s)', PLACE_MIN_Y);
+        ui.toast('海の上には置けません（陸地をタップ）');
+        return;
+      }
+
+      const ok = objects.place(palette, p.x, p.z);
+      if (!ok) {
+        ui.toast(`設置できる数の上限（${objects.MAX}個）に達しました`);
+        return;
+      }
+      console.log('[place] 設置しました。合計 %d 個', objects.count());
+      clearSelection();
+    } catch (err) {
+      console.error('[place] handleTap でエラー:', err);
     }
-    clearSelection();
   }
 
   function onDown(e) {
@@ -118,7 +145,15 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
     const wasMulti = multi;
     down = null;
     multi = false;
-    if (wasMulti || moved || dt > TAP_TIME) return; // カメラ操作だった
+    if (wasMulti || moved || dt > TAP_TIME) {
+      console.log(
+        '[place] タップ無効（カメラ操作扱い） moved=%s 複数指=%s 時間=%dms',
+        moved,
+        wasMulti,
+        Math.round(dt)
+      );
+      return;
+    }
     handleTap(x, y);
   }
 
@@ -131,7 +166,9 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
 
   function setMode(m) {
     mode = m;
-    if (m !== 'place') {
+    if (m === 'place') {
+      console.log('[place] 設置モードに切り替え。地面（陸地）をタップしてください');
+    } else {
       down = null;
       multi = false;
       clearSelection();
