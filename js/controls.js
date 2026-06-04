@@ -24,9 +24,9 @@ export function createControls(camera, domElement) {
   controls.minPolarAngle = 0.15;
   controls.maxPolarAngle = Math.PI / 2 - 0.05;
 
-  // ズームの距離制限
+  // ズームの距離制限（広い地形に合わせて引けるように）
   controls.minDistance = 6;
-  controls.maxDistance = 60;
+  controls.maxDistance = 130;
 
   // 島（原点）を中心に見る
   controls.target.set(0, 0, 0);

@@ -20,10 +20,9 @@ const TOOL_COLORS = {
  * @param {THREE.Camera} deps.camera
  * @param {HTMLElement} deps.dom - レンダラーの canvas
  * @param {object} deps.terrain - createTerrain() の戻り値
- * @param {object} deps.controls - OrbitControls
  * @param {THREE.Scene} deps.scene
  */
-export function createTerrainEditor({ camera, dom, terrain, controls, scene }) {
+export function createTerrainEditor({ camera, dom, terrain, scene }) {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
 
@@ -99,7 +98,6 @@ export function createTerrainEditor({ camera, dom, terrain, controls, scene }) {
 
   function setMode(m) {
     state.mode = m;
-    controls.enabled = m === 'camera'; // 編集中はカメラ操作を止めて干渉を防ぐ
     if (m !== 'edit') {
       isDown = false;
       activeId = null;

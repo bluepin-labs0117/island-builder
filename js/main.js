@@ -10,59 +10,124 @@ import {
 import { createTerrain } from './terrain.js';
 import { createControls } from './controls.js';
 import { createTerrainEditor } from './terrainEditor.js';
+import { createObjects } from './objects.js';
+import { createPlaceEditor } from './placeEditor.js';
 import { createUI } from './ui.js';
+import { loadState, clearState, createAutoSaver } from './storage.js';
 
-// ブラシの可動範囲（UIとエディタで共有）
-const RADIUS_RANGE = [0.6, 6];
+const RADIUS_RANGE = [0.6, 8];
 const STRENGTH_RANGE = [0.02, 0.4];
 
 function init() {
   const container = document.getElementById('app');
 
-  // 土台（レンダラー・カメラ・シーン・海・ライト）
+  // 土台
   const renderer = createRenderer(container);
   const camera = createCamera();
   const { scene } = createScene();
 
-  // 中央に編集できる地形（ハイトマップの島）を置く
+  // 編集できる地形（広い島）
   const terrain = createTerrain();
   scene.add(terrain.mesh);
 
-  // カメラ操作（タッチ対応）
+  // 設置オブジェクト（種類ごとにインスタンシング）
+  const objects = createObjects({ scene, terrain });
+
+  // カメラ操作
   const controls = createControls(camera, renderer.domElement);
 
-  // 地形編集（カメラ操作と排他のモード制）
+  // 地形編集
   const editor = createTerrainEditor({
     camera,
     dom: renderer.domElement,
     terrain,
-    controls,
     scene,
   });
 
-  // 操作UI（モード切替・ツール・スライダー）
-  createUI({
-    radius: editor.state.radius,
-    strength: editor.state.strength,
+  // 自動保存（地形＋設置物）
+  const getState = () => ({
+    v: 1,
+    terrain: { heights: roundedHeights(terrain.getHeights()) },
+    objects: objects.serialize(),
+  });
+  const scheduleSave = createAutoSaver(getState, 600);
+  terrain.api.onChange = scheduleSave;
+  objects.setOnChange(scheduleSave);
+
+  // UI（先に作り、設置エディタへ渡す）
+  const ui = createUI({
+    radius: 2.5,
+    strength: 0.12,
     radiusRange: RADIUS_RANGE,
     strengthRange: STRENGTH_RANGE,
-    onMode: (m) => editor.setMode(m),
+    onMode: (m) => applyMode(m),
     onTool: (t) => editor.setTool(t),
     onRadius: (v) => editor.setRadius(v),
     onStrength: (v) => editor.setStrength(v),
+    onPalette: (t) => place.setPalette(t),
+    onRotate: () => place.rotateSelected(),
+    onDelete: () => place.deleteSelected(),
+    onReset: () => doReset(),
   });
 
-  // リサイズ追従
+  // 設置入力
+  const place = createPlaceEditor({
+    camera,
+    dom: renderer.domElement,
+    terrain,
+    objects,
+    scene,
+    ui,
+  });
+
+  // モードを一元管理（操作の干渉を防ぐ）
+  function applyMode(m) {
+    controls.enabled = m !== 'edit'; // 地形編集中だけカメラ操作を止める
+    editor.setMode(m);
+    place.setMode(m);
+  }
+  applyMode('camera');
+
+  // リセット
+  function doReset() {
+    if (!confirm('新しい島を作り直します。設置物もすべて消えます。よろしいですか？')) {
+      return;
+    }
+    terrain.reset();
+    objects.clear();
+    place.clearSelection();
+    clearState();
+    scheduleSave();
+    ui.toast('新しい島を作りました');
+  }
+
+  // 前回の島を復元
+  const saved = loadState();
+  if (saved) {
+    if (saved.terrain?.heights) {
+      terrain.setHeights(Float32Array.from(saved.terrain.heights));
+    }
+    if (saved.objects) {
+      objects.load(saved.objects);
+    }
+  }
+
   handleResize(camera, renderer);
 
-  // 描画ループ
   function animate() {
     requestAnimationFrame(animate);
-    controls.update(); // damping を効かせるため毎フレーム呼ぶ
-    editor.update(); // 編集モード時のブラシ処理・リング追従
+    controls.update();
+    editor.update();
     renderer.render(scene, camera);
   }
   animate();
+}
+
+// 高さ配列を丸めて保存サイズを抑える
+function roundedHeights(arr) {
+  const out = new Array(arr.length);
+  for (let i = 0; i < arr.length; i++) out[i] = Math.round(arr[i] * 1000) / 1000;
+  return out;
 }
 
 init();

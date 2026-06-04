@@ -33,8 +33,8 @@ export function createCamera() {
     0.1,
     1000
   );
-  // 島（原点）を斜め上から見下ろす位置
-  camera.position.set(14, 12, 14);
+  // 島（原点）を斜め上から見下ろす位置（広い地形に合わせて少し引く）
+  camera.position.set(28, 24, 28);
   camera.lookAt(0, 0, 0);
   return camera;
 }
@@ -70,19 +70,19 @@ function addLights(scene) {
 
   // 太陽光：暖色（やや低い色温度）で斜め上から
   const sun = new THREE.DirectionalLight(0xfff1d6, 1.05);
-  sun.position.set(16, 22, 9); // 斜め上から
+  sun.position.set(38, 54, 22); // 斜め上から（広い地形をカバー）
   sun.castShadow = true;
 
   // シャドウマップは軽め（低解像度）でスマホ負荷を抑える
   sun.shadow.mapSize.set(1024, 1024);
-  // 影が落ちる範囲を島の周りに絞る（広げるほど甘くなる＆無駄が増える）
-  const d = 18;
+  // 影が落ちる範囲を編集できる地形の広さに合わせる
+  const d = 34;
   sun.shadow.camera.left = -d;
   sun.shadow.camera.right = d;
   sun.shadow.camera.top = d;
   sun.shadow.camera.bottom = -d;
   sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 80;
+  sun.shadow.camera.far = 160;
   // flatShading でのシャドウアクネ（縞）を抑える
   sun.shadow.bias = -0.0005;
   sun.shadow.normalBias = 0.03;
