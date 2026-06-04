@@ -51,6 +51,33 @@ export function createObjects({ scene, terrain }) {
     scene.add(inst);
   }
 
+  // 家の土台（基礎）：灰色の四角い柱を InstancedMesh で。家1棟につき最大4本。
+  const FOUND_CAP = MAX_OBJECTS * 4;
+  const pillarGeo = paint(new THREE.BoxGeometry(1, 1, 1), 0x9a9a9a);
+  const foundationMesh = new THREE.InstancedMesh(
+    pillarGeo,
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true }),
+    FOUND_CAP
+  );
+  foundationMesh.count = 0;
+  foundationMesh.castShadow = true;
+  foundationMesh.receiveShadow = true;
+  foundationMesh.frustumCulled = false;
+  foundationMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  foundationMesh.name = 'foundations';
+  scene.add(foundationMesh);
+
+  // 家の底面の半サイズ（少し内側）と柱の太さ
+  const HOUSE_HX = 0.42;
+  const HOUSE_HZ = 0.36;
+  const PILLAR_W = 0.26;
+  const FOUND_CORNERS = [
+    [HOUSE_HX, HOUSE_HZ],
+    [HOUSE_HX, -HOUSE_HZ],
+    [-HOUSE_HX, HOUSE_HZ],
+    [-HOUSE_HX, -HOUSE_HZ],
+  ];
+
   let total = 0;
   const cb = { onChange: null };
   const emit = () => cb.onChange && cb.onChange();
@@ -90,10 +117,42 @@ export function createObjects({ scene, terrain }) {
     }
     mesh.count = recs.length;
     mesh.instanceMatrix.needsUpdate = true;
+    // 家を作り直したら土台も作り直す（移動・回転・削除に追従）
+    if (type === 'house') rebuildFoundations();
+  }
+
+  // 家の四隅と真下の地面の隙間を、灰色の柱で埋める
+  function rebuildFoundations() {
+    const recs = records['house'];
+    let p = 0;
+    for (const rec of recs) {
+      const baseY = terrain.heightAt(rec.x, rec.z); // 家の底面の高さ
+      const cos = Math.cos(rec.rotY);
+      const sin = Math.sin(rec.rotY);
+      for (const [lx, lz] of FOUND_CORNERS) {
+        // 家の回転に合わせて四隅をワールド座標へ
+        const wx = rec.x + lx * cos - lz * sin;
+        const wz = rec.z + lx * sin + lz * cos;
+        const g = terrain.heightAt(wx, wz);
+        const gap = baseY - g;
+        if (gap <= 0.05) continue; // 地面が底面以上なら土台不要
+        const h = gap + 0.06; // 少し地面へ食い込ませる
+        _qY.setFromAxisAngle(_up, rec.rotY);
+        _pos.set(wx, baseY - h / 2, wz); // 上端を家の底面に合わせる
+        _scl.set(PILLAR_W, h, PILLAR_W);
+        _m.compose(_pos, _qY, _scl);
+        foundationMesh.setMatrixAt(p++, _m);
+        if (p >= FOUND_CAP) break;
+      }
+      if (p >= FOUND_CAP) break;
+    }
+    foundationMesh.count = p;
+    foundationMesh.instanceMatrix.needsUpdate = true;
   }
 
   function rebuildAll() {
     for (const type of TYPES) rebuild(type);
+    rebuildFoundations();
   }
 
   // --- 公開API ---

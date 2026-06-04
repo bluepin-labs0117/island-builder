@@ -24,7 +24,7 @@ function init() {
   // 土台
   const renderer = createRenderer(container);
   const camera = createCamera();
-  const { scene } = createScene();
+  const { scene, water } = createScene();
 
   // 編集できる地形（広い島）
   const terrain = createTerrain();
@@ -51,7 +51,12 @@ function init() {
     objects: objects.serialize(),
   });
   const scheduleSave = createAutoSaver(getState, 600);
-  terrain.api.onChange = scheduleSave;
+  // 地形を編集したら：保存予約＋設置物/土台を新しい地面に接地し直す（throttle）
+  const scheduleReground = debounce(() => objects.reground(), 200);
+  terrain.api.onChange = () => {
+    scheduleSave();
+    scheduleReground();
+  };
   objects.setOnChange(scheduleSave);
 
   // UI（先に作り、設置エディタへ渡す）
@@ -118,9 +123,19 @@ function init() {
     requestAnimationFrame(animate);
     controls.update();
     editor.update();
+    water.update(); // さざ波のスクロール
     renderer.render(scene, camera);
   }
   animate();
+}
+
+// 単純なデバウンス
+function debounce(fn, ms) {
+  let t = null;
+  return () => {
+    clearTimeout(t);
+    t = setTimeout(fn, ms);
+  };
 }
 
 // 高さ配列を丸めて保存サイズを抑える

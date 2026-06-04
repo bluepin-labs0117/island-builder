@@ -3,6 +3,7 @@
 // 後から要素を足しやすいよう、生成したオブジェクトをまとめて返す。
 
 import * as THREE from 'three';
+import { createWater } from './water.js';
 
 /**
  * レンダラーを作成する。
@@ -49,7 +50,7 @@ export function createScene() {
 
   addLights(scene);
   const water = createWater();
-  scene.add(water);
+  scene.add(water.mesh);
 
   return { scene, water };
 }
@@ -88,25 +89,6 @@ function addLights(scene) {
   sun.shadow.normalBias = 0.03;
 
   scene.add(sun);
-}
-
-/**
- * 広い平らな水面の板を1枚作る。
- */
-function createWater() {
-  const geometry = new THREE.PlaneGeometry(400, 400);
-  const material = new THREE.MeshStandardMaterial({
-    color: 0x2f7fd6, // 青い海
-    roughness: 0.6,
-    metalness: 0.1,
-    flatShading: true,
-  });
-  const water = new THREE.Mesh(geometry, material);
-  water.rotation.x = -Math.PI / 2; // 水平に倒す
-  water.position.y = 0;
-  water.receiveShadow = true; // 島の影を水面に落とす
-  water.name = 'water';
-  return water;
 }
 
 /**
