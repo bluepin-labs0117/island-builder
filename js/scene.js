@@ -17,9 +17,12 @@ export function createRenderer(container) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   // スマホの高解像度対応。負荷を抑えるため最大 2 に制限。
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  // 影を有効化。スマホ負荷を抑えるため PCFSoft（やわらかめ）＋低解像度マップ。
+  // 影を有効化。PCFSoft（やわらかい輪郭）。
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // フィルミックなトーンマッピングで階調を自然に（のっぺり感を低減）
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
   container.appendChild(renderer.domElement);
   return renderer;
 }
@@ -61,34 +64,34 @@ export function createScene() {
  * 太陽光は斜め上から当てて、島と地面にやわらかい影を落とす。
  */
 function addLights(scene) {
-  // 半球光：空の色（上）と地面の照り返し（下）でふんわり満たす
-  const hemi = new THREE.HemisphereLight(
-    0xeaf3ff, // 空側：わずかに寒色
-    0xcdb892, // 地面側：暖かい砂の照り返し
-    0.55
-  );
+  // 半球光：空（やや寒色）と地面の照り返し（暖色）。やや弱めにして
+  // 太陽光とのコントラストを残し、立体感（のっぺり感の低減）を出す。
+  const hemi = new THREE.HemisphereLight(0xbfd8ff, 0xb59a6a, 0.65);
   scene.add(hemi);
 
-  // 太陽光：暖色（やや低い色温度）で斜め上から
-  const sun = new THREE.DirectionalLight(0xfff1d6, 1.05);
-  sun.position.set(38, 54, 22); // 斜め上から（広い地形をカバー）
+  // 太陽光：暖色で斜め上から。やや低めの角度にして陰影に奥行きを出す。
+  const sun = new THREE.DirectionalLight(0xfff0d2, 2.0);
+  sun.position.set(34, 40, 20);
   sun.castShadow = true;
 
-  // シャドウマップは軽め（低解像度）でスマホ負荷を抑える
-  sun.shadow.mapSize.set(1024, 1024);
-  // 影が落ちる範囲を編集できる地形の広さに合わせる
-  const d = 34;
+  // 影：解像度を上げつつ PCFSoft で輪郭をやわらかく
+  sun.shadow.mapSize.set(2048, 2048);
+  const d = 34; // 編集できる地形の広さに合わせる
   sun.shadow.camera.left = -d;
   sun.shadow.camera.right = d;
   sun.shadow.camera.top = d;
   sun.shadow.camera.bottom = -d;
   sun.shadow.camera.near = 1;
-  sun.shadow.camera.far = 160;
-  // flatShading でのシャドウアクネ（縞）を抑える
-  sun.shadow.bias = -0.0005;
-  sun.shadow.normalBias = 0.03;
+  sun.shadow.camera.far = 170;
+  sun.shadow.bias = -0.0004;
+  sun.shadow.normalBias = 0.04;
 
   scene.add(sun);
+
+  // 弱い補助光（影側の黒つぶれを防ぎ、奥行きを保つ）
+  const fill = new THREE.DirectionalLight(0xdce6ff, 0.25);
+  fill.position.set(-26, 18, -16);
+  scene.add(fill);
 }
 
 /**

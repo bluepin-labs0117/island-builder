@@ -16,6 +16,15 @@ const TOOLS = [
   { id: 'raise', label: '⛰ 盛る' },
   { id: 'lower', label: '⛏ 掘る' },
   { id: 'smooth', label: '🪵 ならす' },
+  { id: 'water', label: '💧 水' },
+  { id: 'paint', label: '🎨 地表' },
+];
+
+const MATERIALS = [
+  { id: 'grass', label: '🌱 草' },
+  { id: 'sand', label: '🏖 砂' },
+  { id: 'rock', label: '🪨 岩' },
+  { id: 'snow', label: '❄️ 雪' },
 ];
 
 const PALETTE = [
@@ -65,9 +74,27 @@ export function createUI(opts) {
     b.dataset.tool = t.id;
     b.addEventListener('click', () => {
       setActive(toolBtns, 'tool', t.id);
+      // 「地表」ツールのときだけ材質サブパレットを表示
+      matRow.classList.toggle('hidden', t.id !== 'paint');
       opts.onTool(t.id);
     });
     toolRow.appendChild(b);
+    return b;
+  });
+
+  // ペイント材質サブパレット（地表ツール選択時のみ表示）
+  const matRow = document.createElement('div');
+  matRow.className = 'btn-row mat-row hidden';
+  const matBtns = MATERIALS.map((mt) => {
+    const b = document.createElement('button');
+    b.className = 'ui-btn chip-btn';
+    b.textContent = mt.label;
+    b.dataset.mat = mt.id;
+    b.addEventListener('click', () => {
+      setActive(matBtns, 'mat', mt.id);
+      opts.onPaintMaterial(mt.id);
+    });
+    matRow.appendChild(b);
     return b;
   });
 
@@ -83,7 +110,7 @@ export function createUI(opts) {
       v.toFixed(2)
     )
   );
-  editPanel.append(toolRow, sliders);
+  editPanel.append(toolRow, matRow, sliders);
 
   // ===== 設置パネル =====
   const placePanel = document.createElement('div');
@@ -159,6 +186,7 @@ export function createUI(opts) {
 
   // 初期表示（コールバックは呼ばず見た目だけ整える。実際のモード適用は main 側）
   setActive(toolBtns, 'tool', 'raise');
+  setActive(matBtns, 'mat', 'grass');
   setActive(palBtns, 'pal', 'tree');
   modeBtns.forEach((b) => b.classList.toggle('active', b.dataset.mode === 'camera'));
   editPanel.classList.add('hidden');

@@ -7,7 +7,7 @@ import {
   createScene,
   handleResize,
 } from './scene.js';
-import { createTerrain } from './terrain.js';
+import { createTerrain, PAINT_IDS } from './terrain.js';
 import { createControls } from './controls.js';
 import { createTerrainEditor } from './terrainEditor.js';
 import { createObjects } from './objects.js';
@@ -44,10 +44,13 @@ function init() {
     scene,
   });
 
-  // 自動保存（地形＋設置物）
+  // 自動保存（地形の高さ＋手動ペイント＋設置物）
   const getState = () => ({
-    v: 1,
-    terrain: { heights: roundedHeights(terrain.getHeights()) },
+    v: 2,
+    terrain: {
+      heights: roundedHeights(terrain.getHeights()),
+      paint: encodePaint(terrain.getPaint()), // 塗った所だけ疎に保存
+    },
     objects: objects.serialize(),
   });
   const scheduleSave = createAutoSaver(getState, 600);
@@ -69,6 +72,7 @@ function init() {
     onTool: (t) => editor.setTool(t),
     onRadius: (v) => editor.setRadius(v),
     onStrength: (v) => editor.setStrength(v),
+    onPaintMaterial: (name) => terrain.setPaintMaterial(PAINT_IDS[name]),
     onPalette: (t) => place.setPalette(t),
     onRotate: () => place.rotateSelected(),
     onDelete: () => place.deleteSelected(),
@@ -112,6 +116,9 @@ function init() {
     if (saved.terrain?.heights) {
       terrain.setHeights(Float32Array.from(saved.terrain.heights));
     }
+    if (saved.terrain?.paint) {
+      terrain.setPaint(decodePaint(saved.terrain.paint, terrain.getPaint().length));
+    }
     if (saved.objects) {
       objects.load(saved.objects);
     }
@@ -143,6 +150,26 @@ function roundedHeights(arr) {
   const out = new Array(arr.length);
   for (let i = 0; i < arr.length; i++) out[i] = Math.round(arr[i] * 1000) / 1000;
   return out;
+}
+
+// 手動ペイントは塗った所だけ疎に保存（[index, materialId, ...]）
+function encodePaint(arr) {
+  const out = [];
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i]) out.push(i, arr[i]);
+  }
+  return out;
+}
+
+function decodePaint(sparse, len) {
+  const a = new Uint8Array(len);
+  if (Array.isArray(sparse)) {
+    for (let i = 0; i + 1 < sparse.length; i += 2) {
+      const idx = sparse[i];
+      if (idx >= 0 && idx < len) a[idx] = sparse[i + 1];
+    }
+  }
+  return a;
 }
 
 init();

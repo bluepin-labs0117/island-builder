@@ -16,16 +16,17 @@ export function createWater(level = WATER_LEVEL) {
 
   const normalMap = makeWaveNormalMap(128);
   normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping;
-  normalMap.repeat.set(28, 28);
+  normalMap.repeat.set(34, 34);
 
   const material = new THREE.MeshStandardMaterial({
-    color: 0x2f7fd6,
+    color: 0x2b87a6, // 自然なターコイズ寄りの青
     transparent: true,
-    opacity: 0.72, // 半透明：水中の地形が透ける
-    roughness: 0.25, // 低めにして太陽のきらめきを出す
-    metalness: 0.0,
+    // 半透明：浅い所は砂底が透けて明るく、深い所は暗く見える（深さで色が変わる）
+    opacity: 0.66,
+    roughness: 0.14, // 低めで水面のきらめき（太陽光の映り込み）
+    metalness: 0.0, // 環境マップが無いので 0（>0 だと暗くなる）
     normalMap,
-    normalScale: new THREE.Vector2(0.35, 0.35),
+    normalScale: new THREE.Vector2(0.5, 0.5),
     depthWrite: false, // 透明面なので深度は書かない（下の地形を見せる）
   });
 
@@ -42,8 +43,9 @@ export function createWater(level = WATER_LEVEL) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     t += dt;
-    normalMap.offset.x = (t * 0.018) % 1;
-    normalMap.offset.y = (t * 0.012) % 1;
+    // 斜め方向へ流す＝川のように流れて見える
+    normalMap.offset.x = (t * 0.03) % 1;
+    normalMap.offset.y = (t * 0.022) % 1;
   }
 
   return { mesh, update, level };
@@ -60,10 +62,13 @@ function makeWaveNormalMap(size) {
   const H = (x, y) => {
     const fx = (x / size) * Math.PI * 2;
     const fy = (y / size) * Math.PI * 2;
+    // 複数の波を重ねて豊かなさざ波に（周期関数なのでタイル可能）
     return (
       Math.sin(fx * 2 + Math.cos(fy * 3)) * 0.5 +
       Math.sin(fy * 3 + Math.cos(fx * 2)) * 0.5 +
-      Math.sin((fx + fy) * 4) * 0.25
+      Math.sin((fx + fy) * 4) * 0.25 +
+      Math.sin((fx - fy) * 6 + 1.7) * 0.18 +
+      Math.sin(fx * 5 + fy * 2) * 0.12
     );
   };
 

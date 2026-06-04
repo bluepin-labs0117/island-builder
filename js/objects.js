@@ -11,10 +11,10 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 export const TYPES = ['rock', 'tree', 'house'];
 export const MAX_OBJECTS = 300;
 
-// 種類ごとの設定：tiltK=地形の傾きへ沿う度合い（家は0で常に垂直）
+// 種類ごとの設定：tiltK=地形の傾きへ沿う度合い（家・木は0で常に垂直、岩のみ傾く）
 const DEFS = {
   rock: { tiltK: 0.7, scale: 1.0 },
-  tree: { tiltK: 0.35, scale: 1.0 },
+  tree: { tiltK: 0.0, scale: 1.0 },
   house: { tiltK: 0.0, scale: 1.0 },
 };
 

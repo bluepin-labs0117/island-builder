@@ -31,14 +31,19 @@ export function createControls(camera, domElement) {
   // 島（原点）を中心に見る
   controls.target.set(0, 0, 0);
 
-  // タッチ操作の割り当て：1本指=回転 / 2本指=ピンチでズーム＋移動
+  // タッチ操作：1本指=回転 / 2本指=ピンチでズーム＋平行移動（パン）
   controls.touches = {
     ONE: THREE.TOUCH.ROTATE,
     TWO: THREE.TOUCH.DOLLY_PAN,
   };
 
-  // フェーズ1では右ドラッグ等の平行移動は無効にしてシンプルに
-  controls.enablePan = false;
+  // 平行移動（パン）を有効化。視点を自由に動かせる。
+  // PC: 右ドラッグ / スマホ: 2本指ドラッグ
+  controls.enablePan = true;
+  controls.screenSpacePanning = true; // 画面に沿った自然なパン
+  controls.panSpeed = 0.9;
+  // パンしすぎて地形外へ行き過ぎないよう中心の移動範囲をゆるく制限
+  controls.maxTargetRadius = 40;
 
   controls.update();
   return controls;

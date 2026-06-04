@@ -13,6 +13,8 @@ const TOOL_COLORS = {
   raise: 0x66ff99,
   lower: 0xff7766,
   smooth: 0x66ccff,
+  water: 0x3aa0ff,
+  paint: 0xffd166,
 };
 
 /**
