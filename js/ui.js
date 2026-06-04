@@ -54,12 +54,33 @@ export function createUI(opts) {
     return b;
   });
 
+  // 右上：画質切替（タップで 低→中→高 を循環）＋ リセット
+  const rightBox = document.createElement('div');
+  rightBox.className = 'right-box';
+
+  const QLEVELS = ['low', 'medium', 'high'];
+  const QLABELS = { low: '低', medium: '中', high: '高' };
+  let quality = opts.quality || 'medium';
+  const qualityBtn = document.createElement('button');
+  qualityBtn.className = 'ui-btn quality-btn';
+  const updateQualityLabel = () => {
+    qualityBtn.textContent = `画質:${QLABELS[quality]}`;
+  };
+  updateQualityLabel();
+  qualityBtn.addEventListener('click', () => {
+    const next = QLEVELS[(QLEVELS.indexOf(quality) + 1) % QLEVELS.length];
+    quality = next;
+    updateQualityLabel();
+    opts.onQuality(next);
+  });
+
   const resetBtn = document.createElement('button');
   resetBtn.className = 'ui-btn reset-btn';
   resetBtn.textContent = '🗑 リセット';
   resetBtn.addEventListener('click', () => opts.onReset());
 
-  topbar.append(modeSeg, resetBtn);
+  rightBox.append(qualityBtn, resetBtn);
+  topbar.append(modeSeg, rightBox);
 
   // ===== 地形編集パネル =====
   const editPanel = document.createElement('div');

@@ -278,12 +278,45 @@ function paint(geo, hex) {
   return geo;
 }
 
-// 岩：灰色の角張った塊（少し埋まって見えるよう持ち上げる）
+// 岩：ゴツゴツした角張った塊。頂点をノイズで動かして硬質感を、
+// 頂点カラーに濃淡のムラを付けて面の陰影を強める。
 function makeRock() {
-  const g = new THREE.IcosahedronGeometry(0.55, 0);
-  g.scale(1, 0.8, 1);
-  g.translate(0, 0.32, 0);
-  return paint(g, 0x8a857d);
+  const g = new THREE.IcosahedronGeometry(0.55, 1); // detail=1 で面を増やす
+  const pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    const z = pos.getZ(i);
+    // 方向ごとに不規則に伸縮させてゴツゴツに
+    const n =
+      Math.sin(x * 9.1 + y * 4.7) * 0.5 +
+      Math.sin(y * 7.3 + z * 5.9) * 0.5 +
+      Math.sin(z * 8.5 + x * 3.3) * 0.5;
+    const s = 1 + n * 0.22;
+    pos.setXYZ(i, x * s, y * s, z * s);
+  }
+  g.scale(1, 0.82, 1);
+  g.translate(0, 0.3, 0);
+  g.computeVertexNormals();
+
+  // 頂点カラーに明暗のムラ
+  const base = new THREE.Color(0x8a857d);
+  const dark = new THREE.Color(0x595550);
+  const arr = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i);
+    const m = 0.5 + 0.5 * Math.sin(pos.getX(i) * 11.0 + pos.getZ(i) * 7.0);
+    const t = Math.min(1, Math.max(0, m * 0.7 + y * 0.3));
+    arr[i * 3] = lerpN(dark.r, base.r, t);
+    arr[i * 3 + 1] = lerpN(dark.g, base.g, t);
+    arr[i * 3 + 2] = lerpN(dark.b, base.b, t);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return g;
+}
+
+function lerpN(a, b, t) {
+  return a + (b - a) * t;
 }
 
 // 木：茶色い幹＋緑の円錐の葉

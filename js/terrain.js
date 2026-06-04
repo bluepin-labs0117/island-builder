@@ -1,33 +1,37 @@
 // terrain.js
-// 島の地面を「連続したハイトマップメッシュ」として作る。
-// 頂点を上げ下げして起伏を作り、なめらかな陰影（法線の解析計算）と、
-// 標高＋傾斜に応じた色（砂浜→草→岩肌→雪）を持つ。
-// さらに手動ペイント（草/砂/岩/雪）で上書きでき、塗った場所は自動色より優先。
+// ハイトマップの地形＋「場所ごとの水面」を持つ内陸水メッシュを管理する。
 //
-// 軽量化の要：
-//  - 分割数(SEG)は上限を守り、範囲(SIZE)拡大は1マスを大きくして頂点数据え置き。
-//  - 編集のたびブラシが触れたグリッド範囲だけ更新する。
+// 水の仕組み（流体シミュなし）:
+//  - 海は別途 water.js の大きな板（固定 y=0）。
+//  - 内陸の水は pool[i]（その地点の水面の高さ）を持ち、海面より高い標高にも
+//    水を置ける。pool[i] > 地表 なら水が見える。
+//  - 「水」ツールでなぞった所に、その地点の地表＋少しの深さで水面を作る。
+//    斜面に沿って掘った溝をなぞれば、水面が下流へ段々に下って川に見える。
 //
-// 縁の扱い：外周ほど高さを海面下(SEA_EDGE)へなめらかに戻し、島が海に浮く。
+// 色は標高＋傾斜で自動変化（砂→草→岩→雪）。手動ペイントが優先。
+// 谷を暗くする簡易AO・岩肌のムラで、のっぺり感を低減。
 
 import * as THREE from 'three';
+import { makeWaveNormalMap } from './waveTexture.js';
 
 const SIZE = 60;
 const SEG = 128;
 const SEA_EDGE = -3.0;
 
-// 水位（海面）。これより低い場所は水に沈んで見える。
-export const WATER_LEVEL = 0;
-// 「水」ツールで掘り下げる目標の高さ（水位より少し下＝水で満たす）
-const WATER_TARGET = -0.8;
+export const WATER_LEVEL = 0; // 海面（固定）
+const WATER_FILL = 0.5; // 「水」ツールが地表より上に張る水の深さ
+const POOL_NONE = -1e9; // 内陸水なしを表す番兵
 
-// 標高カラー（sRGB を THREE.Color が線形に変換して保持＝トーンマッピング前提で正しい）
+// 標高カラー（THREE.Color は sRGB→線形に変換して保持＝トーンマッピングで正しい）
 const SAND = new THREE.Color(0xe8d8a0);
 const GRASS = new THREE.Color(0x6fb04a);
-const ROCK = new THREE.Color(0x8a7b63); // 土・岩肌（茶〜灰）
+const ROCK = new THREE.Color(0x8a7b63);
+const ROCK_DARK = new THREE.Color(0x5f564a);
 const SNOW = new THREE.Color(0xeef2f6);
 
-// 手動ペイントの材質ID → 色
+const WATER_SHALLOW = new THREE.Color(0x7fd2e0);
+const WATER_DEEP = new THREE.Color(0x16688f);
+
 const PAINT = { 1: GRASS, 2: SAND, 3: ROCK, 4: SNOW };
 export const PAINT_IDS = { grass: 1, sand: 2, rock: 3, snow: 4 };
 
@@ -45,14 +49,16 @@ export function createTerrain() {
   const posAttr = geo.attributes.position;
   const normAttr = geo.attributes.normal;
   const colorArr = new Float32Array(verts * verts * 3);
-  const colorAttr = new THREE.BufferAttribute(colorArr, 3);
-  geo.setAttribute('color', colorAttr);
+  geo.setAttribute('color', new THREE.BufferAttribute(colorArr, 3));
+  const colorAttr = geo.attributes.color;
 
   const heights = new Float32Array(verts * verts);
   const mask = new Float32Array(verts * verts);
-  const paint = new Uint8Array(verts * verts); // 0=自動, それ以外=材質ID
+  const paint = new Uint8Array(verts * verts);
+  const pool = new Float32Array(verts * verts).fill(POOL_NONE);
 
-  let paintMaterial = PAINT_IDS.grass; // 「ペイント」ツールで塗る材質
+  let paintMaterial = PAINT_IDS.grass;
+  let aoEnabled = true;
 
   const idx = (ix, iz) => iz * verts + ix;
 
@@ -68,6 +74,33 @@ export function createTerrain() {
 
   const dispH = (i) => SEA_EDGE + (heights[i] - SEA_EDGE) * mask[i];
 
+  // --- 内陸水メッシュ（場所ごとの水面） ---
+  const waterGeo = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
+  waterGeo.rotateX(-Math.PI / 2);
+  const wPos = waterGeo.attributes.position;
+  const wColorArr = new Float32Array(verts * verts * 4); // RGBA
+  waterGeo.setAttribute('color', new THREE.BufferAttribute(wColorArr, 4));
+  const wColorAttr = waterGeo.attributes.color;
+  waterGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), SIZE * 1.2);
+
+  const waterNormal = makeWaveNormalMap(128);
+  waterNormal.repeat.set(26, 26);
+  const waterMat = new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    transparent: true,
+    alphaTest: 0.02, // 水の無い所（alpha≈0）は破棄して軽く
+    roughness: 0.13,
+    metalness: 0.0,
+    normalMap: waterNormal,
+    normalScale: new THREE.Vector2(0.45, 0.45),
+    depthWrite: false,
+  });
+  const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+  waterMesh.frustumCulled = false;
+  waterMesh.renderOrder = 2;
+  waterMesh.name = 'inlandWater';
+
+  // --- 書き込みヘルパー ---
   function writeY(i) {
     posAttr.setY(i, dispH(i));
   }
@@ -84,30 +117,38 @@ export function createTerrain() {
     normAttr.setXYZ(idx(ix, iz), nx / len, ny / len, nz / len);
   }
 
-  // 標高＋傾斜から自動色を決める（くっきりさせず標高でなだらかに混ぜる）
   const _c = { r: 0, g: 0, b: 0 };
-  function autoColor(h, ny) {
+  function autoColor(h, ny, ix, iz) {
     let r = SAND.r;
     let g = SAND.g;
     let b = SAND.b;
-    // 砂浜 → 草
     const tg = smoothstep(0.12, 0.7, h);
     r = lerp(r, GRASS.r, tg);
     g = lerp(g, GRASS.g, tg);
     b = lerp(b, GRASS.b, tg);
-    // 草 → 岩肌（標高 or 急斜面）
+    // 岩肌：標高 or 急斜面。岩は明暗のムラ（ノイズ）でゴツゴツ感を出す。
     let tr = smoothstep(2.6, 5.0, h);
-    const steep = 1 - ny; // 0=平ら, 1=垂直
-    const slopeRock = smoothstep(0.45, 0.85, steep) * smoothstep(0.4, 1.4, h);
+    const steep = 1 - ny;
+    const slopeRock = smoothstep(0.42, 0.85, steep) * smoothstep(0.4, 1.4, h);
     tr = Math.max(tr, slopeRock);
-    r = lerp(r, ROCK.r, tr);
-    g = lerp(g, ROCK.g, tr);
-    b = lerp(b, ROCK.b, tr);
-    // 岩肌 → 雪
+    if (tr > 0) {
+      const n = hash(ix, iz); // 0..1
+      // 岩色自体に濃淡のムラ（暗い岩↔明るい岩）
+      const rr = lerp(ROCK_DARK.r, ROCK.r, n);
+      const rg = lerp(ROCK_DARK.g, ROCK.g, n);
+      const rb = lerp(ROCK_DARK.b, ROCK.b, n);
+      r = lerp(r, rr, tr);
+      g = lerp(g, rg, tr);
+      b = lerp(b, rb, tr);
+    }
+    // 雪
     const ts = smoothstep(5.8, 8.0, h);
-    r = lerp(r, SNOW.r, ts);
-    g = lerp(g, SNOW.g, ts);
-    b = lerp(b, SNOW.b, ts);
+    if (ts > 0) {
+      const sn = 0.92 + hash(iz, ix) * 0.08;
+      r = lerp(r, SNOW.r * sn, ts);
+      g = lerp(g, SNOW.g * sn, ts);
+      b = lerp(b, SNOW.b * sn, ts);
+    }
     _c.r = r;
     _c.g = g;
     _c.b = b;
@@ -117,19 +158,52 @@ export function createTerrain() {
     const o = i * 3;
     const pid = paint[i];
     if (pid) {
-      const c = PAINT[pid]; // 手動ペイントは自動色より優先（固定表示）
+      const c = PAINT[pid];
       colorArr[o] = c.r;
       colorArr[o + 1] = c.g;
       colorArr[o + 2] = c.b;
       return;
     }
-    autoColor(dispH(i), normAttr.getY(i));
-    colorArr[o] = _c.r;
-    colorArr[o + 1] = _c.g;
-    colorArr[o + 2] = _c.b;
+    const ix = i % verts;
+    const iz = (i / verts) | 0;
+    const h = dispH(i);
+    autoColor(h, normAttr.getY(i), ix, iz);
+    // 簡易AO：周囲より低い谷を少し暗くして奥行きを出す
+    let ao = 1;
+    if (aoEnabled) {
+      const hN =
+        (dispH(idx(Math.max(ix - 1, 0), iz)) +
+          dispH(idx(Math.min(ix + 1, SEG), iz)) +
+          dispH(idx(ix, Math.max(iz - 1, 0))) +
+          dispH(idx(ix, Math.min(iz + 1, SEG)))) *
+        0.25;
+      ao = 1 - clamp((hN - h) * 0.5, 0, 0.32);
+    }
+    colorArr[o] = _c.r * ao;
+    colorArr[o + 1] = _c.g * ao;
+    colorArr[o + 2] = _c.b * ao;
   }
 
-  // 高さ→法線→色 の順（色は傾斜＝法線を参照するため）
+  function writeWater(i) {
+    const o = i * 4;
+    const td = dispH(i);
+    const surf = pool[i];
+    const wet = surf > td + 0.04 && surf > WATER_LEVEL + 0.02;
+    if (!wet) {
+      if (surf <= td && surf > POOL_NONE) pool[i] = POOL_NONE; // 地形が上がったら掃除
+      wPos.setY(i, td);
+      wColorArr[o + 3] = 0;
+      return;
+    }
+    wPos.setY(i, surf);
+    const depth = surf - td;
+    const tdp = smoothstep(0.15, 2.2, depth);
+    wColorArr[o] = lerp(WATER_SHALLOW.r, WATER_DEEP.r, tdp);
+    wColorArr[o + 1] = lerp(WATER_SHALLOW.g, WATER_DEEP.g, tdp);
+    wColorArr[o + 2] = lerp(WATER_SHALLOW.b, WATER_DEEP.b, tdp);
+    wColorArr[o + 3] = smoothstep(0.04, 0.3, depth) * 0.82;
+  }
+
   function updateRegion(ix0, ix1, iz0, iz1) {
     for (let iz = iz0; iz <= iz1; iz++) {
       for (let ix = ix0; ix <= ix1; ix++) writeY(idx(ix, iz));
@@ -142,11 +216,17 @@ export function createTerrain() {
       for (let ix = nx0; ix <= nx1; ix++) writeNormal(ix, iz);
     }
     for (let iz = iz0; iz <= iz1; iz++) {
-      for (let ix = ix0; ix <= ix1; ix++) writeColor(idx(ix, iz));
+      for (let ix = ix0; ix <= ix1; ix++) {
+        const i = idx(ix, iz);
+        writeColor(i);
+        writeWater(i);
+      }
     }
     posAttr.needsUpdate = true;
     normAttr.needsUpdate = true;
     colorAttr.needsUpdate = true;
+    wPos.needsUpdate = true;
+    wColorAttr.needsUpdate = true;
   }
 
   function rebuildAll() {
@@ -184,19 +264,19 @@ export function createTerrain() {
     const r2 = radius * radius;
 
     if (tool === 'paint') {
-      // なぞった所を選択中の材質で塗る（自動色を上書き）
       for (let iz = iz0; iz <= iz1; iz++) {
         for (let ix = ix0; ix <= ix1; ix++) {
           const dx = -half + ix * cell - cx;
           const dz = -half + iz * cell - cz;
-          if (dx * dx + dz * dz > r2) continue;
-          const w = falloff(Math.sqrt(dx * dx + dz * dz), radius);
-          if (w > 0.3) paint[idx(ix, iz)] = paintMaterial;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > r2) continue;
+          if (falloff(Math.sqrt(d2), radius) > 0.3) paint[idx(ix, iz)] = paintMaterial;
         }
       }
     } else if (tool === 'water') {
-      // 水位より少し下まで掘り下げて水で満たす（上げはしない＝既存の水を消さない）
-      const k = Math.min(1, strength * 5);
+      // なぞった所に水を発生させる。盛り上がって見えないよう浅い水底を彫り、
+      // 水面はその地点の元の地表あたりに置く（海面より高い標高でもOK）。
+      // 斜面をなぞれば水面が下流へ段々に下って川のように見える。
       for (let iz = iz0; iz <= iz1; iz++) {
         for (let ix = ix0; ix <= ix1; ix++) {
           const dx = -half + ix * cell - cx;
@@ -204,10 +284,12 @@ export function createTerrain() {
           const d2 = dx * dx + dz * dz;
           if (d2 > r2) continue;
           const w = falloff(Math.sqrt(d2), radius);
+          if (w <= 0.25) continue;
           const i = idx(ix, iz);
-          if (heights[i] > WATER_TARGET) {
-            heights[i] += (WATER_TARGET - heights[i]) * w * k;
-          }
+          const before = dispH(i);
+          heights[i] -= w * 0.3; // 浅い水底を彫る
+          const target = before + WATER_FILL * 0.1; // 水面≒元の地面
+          if (pool[i] < target) pool[i] = target;
         }
       }
     } else if (tool === 'smooth') {
@@ -255,8 +337,7 @@ export function createTerrain() {
     if (api.onChange) api.onChange();
   }
 
-  // --- 設置・セーブ向け ---------------------------------------------------
-
+  // --- 問い合わせ・セーブ ---
   function heightAt(x, z) {
     const gx = clamp((x + half) / cell, 0, SEG);
     const gz = clamp((z + half) / cell, 0, SEG);
@@ -299,8 +380,36 @@ export function createTerrain() {
     rebuildAll();
     return true;
   }
+  function getPool() {
+    return pool;
+  }
+  function setPool(arr) {
+    if (!arr || arr.length !== pool.length) return false;
+    pool.set(arr);
+    rebuildAll();
+    return true;
+  }
   function setPaintMaterial(id) {
     paintMaterial = id;
+  }
+  function setAO(on) {
+    if (aoEnabled === on) return;
+    aoEnabled = on;
+    rebuildAll();
+  }
+  function setWaterDetail(scale) {
+    waterMat.normalScale.set(scale, scale);
+  }
+
+  let wt = 0;
+  let wlast = performance.now();
+  function updateWater() {
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - wlast) / 1000);
+    wlast = now;
+    wt += dt;
+    waterNormal.offset.x = (wt * 0.04) % 1; // 上流→下流の流れ感
+    waterNormal.offset.y = (wt * 0.05) % 1;
   }
 
   function reset() {
@@ -312,11 +421,13 @@ export function createTerrain() {
       }
     }
     paint.fill(0);
+    pool.fill(POOL_NONE);
     rebuildAll();
   }
 
   return {
     mesh,
+    waterMesh,
     applyBrush,
     heightAt,
     normalAt,
@@ -324,10 +435,16 @@ export function createTerrain() {
     setHeights,
     getPaint,
     setPaint,
+    getPool,
+    setPool,
     setPaintMaterial,
+    setAO,
+    setWaterDetail,
+    updateWater,
     reset,
     cell,
     size: SIZE,
+    poolNone: POOL_NONE,
     api,
   };
 }
@@ -351,6 +468,12 @@ function baseHeight(wx, wz) {
     (0.08 * Math.sin(wx * 0.7) * Math.cos(wz * 0.6) +
       0.05 * Math.sin(wx * 1.3 + wz * 1.1));
   return h;
+}
+
+// 0..1 の擬似乱数（位置ハッシュ）。岩肌のムラ用。
+function hash(ix, iz) {
+  const s = Math.sin(ix * 12.9898 + iz * 78.233) * 43758.5453;
+  return s - Math.floor(s);
 }
 
 function falloff(d, R) {

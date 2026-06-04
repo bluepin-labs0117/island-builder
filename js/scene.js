@@ -9,9 +9,9 @@ import { createWater } from './water.js';
  * レンダラーを作成する。
  * @param {HTMLElement} container - canvas を追加する親要素
  */
-export function createRenderer(container) {
+export function createRenderer(container, { antialias = true } = {}) {
   const renderer = new THREE.WebGLRenderer({
-    antialias: true,
+    antialias,
     powerPreference: 'high-performance',
   });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -51,11 +51,11 @@ export function createScene() {
   scene.background = new THREE.Color(0x87ceeb); // 空の色（水色）
   scene.fog = new THREE.Fog(0x87ceeb, 80, 240); // 遠景をやわらかく溶かす
 
-  addLights(scene);
+  const sun = addLights(scene);
   const water = createWater();
   scene.add(water.mesh);
 
-  return { scene, water };
+  return { scene, water, sun };
 }
 
 /**
@@ -87,11 +87,14 @@ function addLights(scene) {
   sun.shadow.normalBias = 0.04;
 
   scene.add(sun);
+  scene.add(sun.target);
 
   // 弱い補助光（影側の黒つぶれを防ぎ、奥行きを保つ）
   const fill = new THREE.DirectionalLight(0xdce6ff, 0.25);
   fill.position.set(-26, 18, -16);
   scene.add(fill);
+
+  return sun;
 }
 
 /**

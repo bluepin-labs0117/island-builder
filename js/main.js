@@ -14,6 +14,12 @@ import { createObjects } from './objects.js';
 import { createPlaceEditor } from './placeEditor.js';
 import { createUI } from './ui.js';
 import { loadState, clearState, createAutoSaver } from './storage.js';
+import {
+  getInitialQuality,
+  antialiasFor,
+  applyQuality,
+  saveQuality,
+} from './quality.js';
 
 const RADIUS_RANGE = [0.6, 8];
 const STRENGTH_RANGE = [0.02, 0.4];
@@ -21,16 +27,20 @@ const STRENGTH_RANGE = [0.02, 0.4];
 function init() {
   const container = document.getElementById('app');
 
-  // 土台
-  const renderer = createRenderer(container);
-  const camera = createCamera();
-  const { scene, water } = createScene();
+  // 画質はレンダラー生成前に決める（アンチエイリアスは生成時のみ設定可能）
+  const quality = getInitialQuality();
 
-  // 編集できる地形（広い島）
+  // 土台
+  const renderer = createRenderer(container, { antialias: antialiasFor(quality) });
+  const camera = createCamera();
+  const { scene, water, sun } = createScene();
+
+  // 編集できる地形（広い島）＋ 内陸の水面メッシュ
   const terrain = createTerrain();
   scene.add(terrain.mesh);
+  scene.add(terrain.waterMesh);
 
-  // 設置オブジェクト（種類ごとにインスタンシング）
+  // 設置オブジェクト
   const objects = createObjects({ scene, terrain });
 
   // カメラ操作
@@ -44,17 +54,17 @@ function init() {
     scene,
   });
 
-  // 自動保存（地形の高さ＋手動ペイント＋設置物）
+  // 自動保存（地形の高さ＋手動ペイント＋内陸水＋設置物）
   const getState = () => ({
-    v: 2,
+    v: 3,
     terrain: {
       heights: roundedHeights(terrain.getHeights()),
-      paint: encodePaint(terrain.getPaint()), // 塗った所だけ疎に保存
+      paint: encodePaint(terrain.getPaint()),
+      pool: encodePool(terrain.getPool(), terrain.poolNone),
     },
     objects: objects.serialize(),
   });
   const scheduleSave = createAutoSaver(getState, 600);
-  // 地形を編集したら：保存予約＋設置物/土台を新しい地面に接地し直す（throttle）
   const scheduleReground = debounce(() => objects.reground(), 200);
   terrain.api.onChange = () => {
     scheduleSave();
@@ -62,12 +72,16 @@ function init() {
   };
   objects.setOnChange(scheduleSave);
 
-  // UI（先に作り、設置エディタへ渡す）
+  // 画質適用に必要な参照
+  const qualityRefs = { renderer, scene, sun, terrain, sea: water };
+
+  // UI
   const ui = createUI({
     radius: 2.5,
     strength: 0.12,
     radiusRange: RADIUS_RANGE,
     strengthRange: STRENGTH_RANGE,
+    quality,
     onMode: (m) => applyMode(m),
     onTool: (t) => editor.setTool(t),
     onRadius: (v) => editor.setRadius(v),
@@ -77,6 +91,10 @@ function init() {
     onRotate: () => place.rotateSelected(),
     onDelete: () => place.deleteSelected(),
     onReset: () => doReset(),
+    onQuality: (level) => {
+      applyQuality(level, qualityRefs);
+      saveQuality(level);
+    },
   });
 
   // 設置入力
@@ -89,15 +107,13 @@ function init() {
     ui,
   });
 
-  // モードを一元管理（操作の干渉を防ぐ）
   function applyMode(m) {
-    controls.enabled = m !== 'edit'; // 地形編集中だけカメラ操作を止める
+    controls.enabled = m !== 'edit';
     editor.setMode(m);
     place.setMode(m);
   }
   applyMode('camera');
 
-  // リセット
   function doReset() {
     if (!confirm('新しい島を作り直します。設置物もすべて消えます。よろしいですか？')) {
       return;
@@ -119,10 +135,16 @@ function init() {
     if (saved.terrain?.paint) {
       terrain.setPaint(decodePaint(saved.terrain.paint, terrain.getPaint().length));
     }
+    if (saved.terrain?.pool) {
+      terrain.setPool(decodePool(saved.terrain.pool, terrain.getPool().length, terrain.poolNone));
+    }
     if (saved.objects) {
       objects.load(saved.objects);
     }
   }
+
+  // 画質を適用（初期値）
+  applyQuality(quality, qualityRefs);
 
   handleResize(camera, renderer);
 
@@ -130,13 +152,13 @@ function init() {
     requestAnimationFrame(animate);
     controls.update();
     editor.update();
-    water.update(); // さざ波のスクロール
+    water.update(); // 海のさざ波
+    terrain.updateWater(); // 内陸水の流れ
     renderer.render(scene, camera);
   }
   animate();
 }
 
-// 単純なデバウンス
 function debounce(fn, ms) {
   let t = null;
   return () => {
@@ -145,7 +167,6 @@ function debounce(fn, ms) {
   };
 }
 
-// 高さ配列を丸めて保存サイズを抑える
 function roundedHeights(arr) {
   const out = new Array(arr.length);
   for (let i = 0; i < arr.length; i++) out[i] = Math.round(arr[i] * 1000) / 1000;
@@ -163,6 +184,26 @@ function encodePaint(arr) {
 
 function decodePaint(sparse, len) {
   const a = new Uint8Array(len);
+  if (Array.isArray(sparse)) {
+    for (let i = 0; i + 1 < sparse.length; i += 2) {
+      const idx = sparse[i];
+      if (idx >= 0 && idx < len) a[idx] = sparse[i + 1];
+    }
+  }
+  return a;
+}
+
+// 内陸水も水のある所だけ疎に保存（[index, 水面の高さ, ...]）
+function encodePool(arr, none) {
+  const out = [];
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] > none) out.push(i, Math.round(arr[i] * 1000) / 1000);
+  }
+  return out;
+}
+
+function decodePool(sparse, len, none) {
+  const a = new Float32Array(len).fill(none);
   if (Array.isArray(sparse)) {
     for (let i = 0; i + 1 < sparse.length; i += 2) {
       const idx = sparse[i];
