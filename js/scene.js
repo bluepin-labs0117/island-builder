@@ -16,7 +16,9 @@ export function createRenderer(container) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   // スマホの高解像度対応。負荷を抑えるため最大 2 に制限。
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.shadowMap.enabled = false; // フェーズ1では影なしで軽量に
+  // 影を有効化。スマホ負荷を抑えるため PCFSoft（やわらかめ）＋低解像度マップ。
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
   return renderer;
 }
@@ -53,16 +55,38 @@ export function createScene() {
 }
 
 /**
- * やわらかい光（環境光 + 平行光1つ）を当てる。
+ * やわらかい光（半球光 + 太陽光1つ）を当てる。
+ * 半球光で空＝やや寒色 / 地面の照り返し＝暖色 を表現し、陰影に自然なメリハリを出す。
+ * 太陽光は斜め上から当てて、島と地面にやわらかい影を落とす。
  */
 function addLights(scene) {
-  // 環境光：全体をふんわり明るく
-  const ambient = new THREE.AmbientLight(0xffffff, 0.85);
-  scene.add(ambient);
+  // 半球光：空の色（上）と地面の照り返し（下）でふんわり満たす
+  const hemi = new THREE.HemisphereLight(
+    0xeaf3ff, // 空側：わずかに寒色
+    0xcdb892, // 地面側：暖かい砂の照り返し
+    0.55
+  );
+  scene.add(hemi);
 
-  // 平行光：太陽光のように一方向から。やわらかめの強さ。
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1.0);
-  sun.position.set(20, 30, 10);
+  // 太陽光：暖色（やや低い色温度）で斜め上から
+  const sun = new THREE.DirectionalLight(0xfff1d6, 1.05);
+  sun.position.set(16, 22, 9); // 斜め上から
+  sun.castShadow = true;
+
+  // シャドウマップは軽め（低解像度）でスマホ負荷を抑える
+  sun.shadow.mapSize.set(1024, 1024);
+  // 影が落ちる範囲を島の周りに絞る（広げるほど甘くなる＆無駄が増える）
+  const d = 18;
+  sun.shadow.camera.left = -d;
+  sun.shadow.camera.right = d;
+  sun.shadow.camera.top = d;
+  sun.shadow.camera.bottom = -d;
+  sun.shadow.camera.near = 1;
+  sun.shadow.camera.far = 80;
+  // flatShading でのシャドウアクネ（縞）を抑える
+  sun.shadow.bias = -0.0005;
+  sun.shadow.normalBias = 0.03;
+
   scene.add(sun);
 }
 
@@ -80,6 +104,7 @@ function createWater() {
   const water = new THREE.Mesh(geometry, material);
   water.rotation.x = -Math.PI / 2; // 水平に倒す
   water.position.y = 0;
+  water.receiveShadow = true; // 島の影を水面に落とす
   water.name = 'water';
   return water;
 }

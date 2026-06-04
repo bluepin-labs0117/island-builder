@@ -90,7 +90,10 @@ function createLandLayer({ radius, height, segments, color, irregularity, seed }
     flatShading: true, // ローポリらしい面の陰影
   });
 
-  return new THREE.Mesh(geometry, material);
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = true; // 太陽光で影を落とす
+  mesh.receiveShadow = true; // 別の層（緑→砂浜）の影を受ける
+  return mesh;
 }
 
 /**
