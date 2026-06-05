@@ -15,8 +15,9 @@ const MODES = [
 const TOOLS = [
   { id: 'raise', label: '⛰ 盛る' },
   { id: 'lower', label: '⛏ 掘る' },
+  { id: 'trench', label: '〰️ 溝' },
   { id: 'smooth', label: '🪵 ならす' },
-  { id: 'water', label: '💧 水' },
+  { id: 'source', label: '💧 水源' },
   { id: 'paint', label: '🎨 地表' },
 ];
 
@@ -95,8 +96,10 @@ export function createUI(opts) {
     b.dataset.tool = t.id;
     b.addEventListener('click', () => {
       setActive(toolBtns, 'tool', t.id);
-      // 「地表」ツールのときだけ材質サブパレットを表示
+      // 「地表」ツールのときだけ材質サブパレット、「水源」のとき全消しを表示
       matRow.classList.toggle('hidden', t.id !== 'paint');
+      srcRow.classList.toggle('hidden', t.id !== 'source');
+      srcHint.classList.toggle('hidden', t.id !== 'source');
       opts.onTool(t.id);
     });
     toolRow.appendChild(b);
@@ -119,6 +122,18 @@ export function createUI(opts) {
     return b;
   });
 
+  // 水源サブ操作（水源ツール選択時のみ表示）
+  const srcRow = document.createElement('div');
+  srcRow.className = 'btn-row src-row hidden';
+  const srcHint = document.createElement('div');
+  srcHint.className = 'hint';
+  srcHint.textContent = 'タップで水源を置く／同じ所を再タップで削除';
+  const srcClearBtn = document.createElement('button');
+  srcClearBtn.className = 'ui-btn chip-btn danger';
+  srcClearBtn.textContent = '🚱 水源を全消し';
+  srcClearBtn.addEventListener('click', () => opts.onClearSources());
+  srcRow.append(srcClearBtn);
+
   const sliders = document.createElement('div');
   sliders.className = 'sliders';
   sliders.appendChild(
@@ -131,7 +146,8 @@ export function createUI(opts) {
       v.toFixed(2)
     )
   );
-  editPanel.append(toolRow, matRow, sliders);
+  editPanel.append(toolRow, matRow, srcRow, srcHint, sliders);
+  srcHint.classList.add('hidden');
 
   // ===== 設置パネル =====
   const placePanel = document.createElement('div');

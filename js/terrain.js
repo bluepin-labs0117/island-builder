@@ -305,6 +305,20 @@ export function createTerrain() {
           if (pool[i] < target) pool[i] = target;
         }
       }
+    } else if (tool === 'trench') {
+      // 溝：なぞった経路の中心を細く深く彫る（谷＝水路を作る）
+      for (let iz = iz0; iz <= iz1; iz++) {
+        for (let ix = ix0; ix <= ix1; ix++) {
+          const dx = -half + ix * cell - cx;
+          const dz = -half + iz * cell - cz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 > r2) continue;
+          const dd = Math.sqrt(d2);
+          if (dd > radius * 0.55) continue; // 中心寄りだけ＝細い溝
+          const w = falloff(dd, radius * 0.55);
+          heights[idx(ix, iz)] -= strength * 1.8 * w;
+        }
+      }
     } else if (tool === 'smooth') {
       let sum = 0;
       let cnt = 0;

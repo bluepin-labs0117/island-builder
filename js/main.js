@@ -11,6 +11,7 @@ import { createTerrain, PAINT_IDS } from './terrain.js';
 import { createControls } from './controls.js';
 import { createTerrainEditor } from './terrainEditor.js';
 import { createObjects } from './objects.js';
+import { createFluid } from './fluid.js';
 import { createPlaceEditor } from './placeEditor.js';
 import { createUI } from './ui.js';
 import { loadState, clearState, createAutoSaver } from './storage.js';
@@ -44,26 +45,31 @@ function init() {
   // 設置オブジェクト
   const objects = createObjects({ scene, terrain });
 
+  // 流体（水源から流れる水）
+  const fluid = createFluid({ scene, terrain });
+
   // カメラ操作
   const controls = createControls(camera, renderer.domElement);
 
-  // 地形編集
+  // 地形編集（水源ツールは流体へ）
   const editor = createTerrainEditor({
     camera,
     dom: renderer.domElement,
     terrain,
+    fluid,
     scene,
   });
 
-  // 自動保存（地形の高さ＋手動ペイント＋内陸水＋設置物）
+  // 自動保存（地形の高さ＋手動ペイント＋設置物＋水源/水）
   const getState = () => ({
-    v: 3,
+    v: 4,
     terrain: {
       heights: roundedHeights(terrain.getHeights()),
       paint: encodePaint(terrain.getPaint()),
       pool: encodePool(terrain.getPool(), terrain.poolNone),
     },
     objects: objects.serialize(),
+    water: fluid.serialize(),
   });
   const scheduleSave = createAutoSaver(getState, 600);
   const scheduleReground = debounce(() => objects.reground(), 200);
@@ -72,12 +78,13 @@ function init() {
     scheduleReground();
   };
   objects.setOnChange(scheduleSave);
+  fluid.setOnChange(scheduleSave); // 水源の増減で保存
 
   // 水面の反射用の空環境マップ（一度だけ生成）
   const skyEnv = createSkyEnv(renderer);
 
   // 画質適用に必要な参照
-  const qualityRefs = { renderer, scene, sun, terrain, sea: water, env: skyEnv };
+  const qualityRefs = { renderer, scene, sun, terrain, sea: water, env: skyEnv, fluid };
 
   // UI
   const ui = createUI({
@@ -94,6 +101,7 @@ function init() {
     onPalette: (t) => place.setPalette(t),
     onRotate: () => place.rotateSelected(),
     onDelete: () => place.deleteSelected(),
+    onClearSources: () => fluid.clearSources(),
     onReset: () => doReset(),
     onQuality: (level) => {
       applyQuality(level, qualityRefs);
@@ -124,11 +132,15 @@ function init() {
     }
     terrain.reset();
     objects.clear();
+    fluid.clear();
     place.clearSelection();
     clearState();
     scheduleSave();
     ui.toast('新しい島を作りました');
   }
+
+  // 画質を適用（流体の格子サイズ等が決まる）→ その後で保存データを復元
+  applyQuality(quality, qualityRefs);
 
   // 前回の島を復元
   const saved = loadState();
@@ -145,10 +157,10 @@ function init() {
     if (saved.objects) {
       objects.load(saved.objects);
     }
+    if (saved.water) {
+      fluid.load(saved.water);
+    }
   }
-
-  // 画質を適用（初期値）
-  applyQuality(quality, qualityRefs);
 
   handleResize(camera, renderer);
 
@@ -157,7 +169,8 @@ function init() {
     controls.update();
     editor.update();
     water.update(); // 海のさざ波
-    terrain.updateWater(); // 内陸水の流れ
+    terrain.updateWater(); // 内陸の静水（海まわり）
+    fluid.update(); // 水源から流れる水のシミュ
     renderer.render(scene, camera);
   }
   animate();

@@ -12,8 +12,9 @@ import * as THREE from 'three';
 const TOOL_COLORS = {
   raise: 0x66ff99,
   lower: 0xff7766,
+  trench: 0xff66cc,
   smooth: 0x66ccff,
-  water: 0x3aa0ff,
+  source: 0x3aa0ff,
   paint: 0xffd166,
 };
 
@@ -22,9 +23,10 @@ const TOOL_COLORS = {
  * @param {THREE.Camera} deps.camera
  * @param {HTMLElement} deps.dom - レンダラーの canvas
  * @param {object} deps.terrain - createTerrain() の戻り値
+ * @param {object} deps.fluid - createFluid() の戻り値（水源の設置に使う）
  * @param {THREE.Scene} deps.scene
  */
-export function createTerrainEditor({ camera, dom, terrain, scene }) {
+export function createTerrainEditor({ camera, dom, terrain, fluid, scene }) {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
 
@@ -63,6 +65,7 @@ export function createTerrainEditor({ camera, dom, terrain, scene }) {
     isDown = true;
     hasPointer = true;
     lastStamp = null;
+    if (state.tool === 'source' && fluid) fluid.beginStroke(); // 水源トグルの重複防止
     setNDC(e);
     e.preventDefault();
     try {
@@ -156,17 +159,20 @@ export function createTerrainEditor({ camera, dom, terrain, scene }) {
       const steps = Math.min(8, Math.floor(dist / spacing));
       for (let s = 1; s < steps; s++) {
         const f = s / steps;
-        terrain.applyBrush(
-          lastStamp.x + dx * f,
-          lastStamp.z + dz * f,
-          state.tool,
-          state.radius,
-          state.strength
-        );
+        stamp(lastStamp.x + dx * f, lastStamp.z + dz * f);
       }
     }
-    terrain.applyBrush(p.x, p.z, state.tool, state.radius, state.strength);
+    stamp(p.x, p.z);
     lastStamp = { x: p.x, z: p.z };
+  }
+
+  // ツールごとに処理を振り分け（水源は流体へ、それ以外は地形ブラシへ）
+  function stamp(x, z) {
+    if (state.tool === 'source') {
+      if (fluid) fluid.toggleSource(x, z);
+    } else {
+      terrain.applyBrush(x, z, state.tool, state.radius, state.strength);
+    }
   }
 
   return { setMode, setTool, setRadius, setStrength, update, state };
