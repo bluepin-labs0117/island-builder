@@ -20,6 +20,7 @@ import {
   applyQuality,
   saveQuality,
 } from './quality.js';
+import { createSkyEnv } from './skyEnv.js';
 
 const RADIUS_RANGE = [0.6, 8];
 const STRENGTH_RANGE = [0.02, 0.4];
@@ -72,8 +73,11 @@ function init() {
   };
   objects.setOnChange(scheduleSave);
 
+  // 水面の反射用の空環境マップ（一度だけ生成）
+  const skyEnv = createSkyEnv(renderer);
+
   // 画質適用に必要な参照
-  const qualityRefs = { renderer, scene, sun, terrain, sea: water };
+  const qualityRefs = { renderer, scene, sun, terrain, sea: water, env: skyEnv };
 
   // UI
   const ui = createUI({

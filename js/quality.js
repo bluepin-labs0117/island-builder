@@ -8,9 +8,9 @@ export const LEVELS = ['low', 'medium', 'high'];
 export const LABELS = { low: '低', medium: '中', high: '高' };
 
 const PRESETS = {
-  high: { pixelRatio: 2.0, shadow: true, shadowSize: 2048, ao: true, waterDetail: 0.5, exposure: 1.15 },
-  medium: { pixelRatio: 1.5, shadow: true, shadowSize: 1024, ao: true, waterDetail: 0.4, exposure: 1.12 },
-  low: { pixelRatio: 1.0, shadow: false, shadowSize: 512, ao: false, waterDetail: 0.25, exposure: 1.1 },
+  high: { pixelRatio: 2.0, shadow: true, shadowSize: 2048, ao: true, waterDetail: 0.7, waterEnv: true, exposure: 1.15 },
+  medium: { pixelRatio: 1.5, shadow: true, shadowSize: 1024, ao: true, waterDetail: 0.5, waterEnv: true, exposure: 1.12 },
+  low: { pixelRatio: 1.0, shadow: false, shadowSize: 512, ao: false, waterDetail: 0.3, waterEnv: false, exposure: 1.1 },
 };
 
 // アンチエイリアスはレンダラー生成時にしか決められないので別途
@@ -55,7 +55,7 @@ export function getInitialQuality() {
  */
 export function applyQuality(level, refs) {
   const p = PRESETS[level] || PRESETS.medium;
-  const { renderer, scene, sun, terrain, sea } = refs;
+  const { renderer, scene, sun, terrain, sea, env } = refs;
 
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, p.pixelRatio));
   renderer.toneMappingExposure = p.exposure;
@@ -74,6 +74,11 @@ export function applyQuality(level, refs) {
   terrain.setAO(p.ao);
   terrain.setWaterDetail(p.waterDetail);
   sea.setDetail(p.waterDetail);
+
+  // 水面の空反射（envMap）。低画質では無効化して軽く。
+  const waterEnv = p.waterEnv ? env || null : null;
+  terrain.setWaterEnv(waterEnv);
+  sea.setEnv(waterEnv);
 
   // 影の有効/無効を切り替えたらシェーダの再コンパイルが必要
   if (shadowChanged && scene) {

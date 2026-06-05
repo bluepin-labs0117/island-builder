@@ -29,8 +29,9 @@ const ROCK = new THREE.Color(0x8a7b63);
 const ROCK_DARK = new THREE.Color(0x5f564a);
 const SNOW = new THREE.Color(0xeef2f6);
 
-const WATER_SHALLOW = new THREE.Color(0x7fd2e0);
-const WATER_DEEP = new THREE.Color(0x16688f);
+// 浅瀬は明るい水色、深いほど濃い青（深さで色が変わる）
+const WATER_SHALLOW = new THREE.Color(0x9fe3ea);
+const WATER_DEEP = new THREE.Color(0x0f4f74);
 
 const PAINT = { 1: GRASS, 2: SAND, 3: ROCK, 4: SNOW };
 export const PAINT_IDS = { grass: 1, sand: 2, rock: 3, snow: 4 };
@@ -84,15 +85,16 @@ export function createTerrain() {
   waterGeo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0, 0), SIZE * 1.2);
 
   const waterNormal = makeWaveNormalMap(128);
-  waterNormal.repeat.set(26, 26);
+  waterNormal.repeat.set(12, 12); // 大きめのうねり
   const waterMat = new THREE.MeshStandardMaterial({
     vertexColors: true,
     transparent: true,
-    alphaTest: 0.02, // 水の無い所（alpha≈0）は破棄して軽く
-    roughness: 0.13,
+    alphaTest: 0.015, // 水の無い所（alpha≈0）は破棄して軽く
+    roughness: 0.09,
     metalness: 0.0,
     normalMap: waterNormal,
-    normalScale: new THREE.Vector2(0.45, 0.45),
+    normalScale: new THREE.Vector2(0.6, 0.6),
+    envMapIntensity: 0.7,
     depthWrite: false,
   });
   const waterMesh = new THREE.Mesh(waterGeo, waterMat);
@@ -187,21 +189,32 @@ export function createTerrain() {
   function writeWater(i) {
     const o = i * 4;
     const td = dispH(i);
-    const surf = pool[i];
-    const wet = surf > td + 0.04 && surf > WATER_LEVEL + 0.02;
-    if (!wet) {
-      if (surf <= td && surf > POOL_NONE) pool[i] = POOL_NONE; // 地形が上がったら掃除
-      wPos.setY(i, td);
-      wColorArr[o + 3] = 0;
-      return;
+
+    // 水面の高さを決める：内陸の池(pool) が最優先、無ければ海面(0)
+    let surf;
+    const hasPool = pool[i] > td + 0.04 && pool[i] > WATER_LEVEL + 0.02;
+    if (hasPool) {
+      surf = pool[i];
+    } else {
+      if (pool[i] <= td && pool[i] > POOL_NONE) pool[i] = POOL_NONE; // 掃除
+      if (td < WATER_LEVEL - 0.01) {
+        surf = WATER_LEVEL; // 海（島まわりの浅瀬〜深場をここで描く）
+      } else {
+        wPos.setY(i, td); // 水なし：地面に伏せて alphaTest で破棄
+        wColorArr[o + 3] = 0;
+        return;
+      }
     }
-    wPos.setY(i, surf);
+
     const depth = surf - td;
-    const tdp = smoothstep(0.15, 2.2, depth);
+    wPos.setY(i, surf);
+    // 深さで色：浅瀬は明るい水色、深いほど濃紺
+    const tdp = smoothstep(0.1, 2.6, depth);
     wColorArr[o] = lerp(WATER_SHALLOW.r, WATER_DEEP.r, tdp);
     wColorArr[o + 1] = lerp(WATER_SHALLOW.g, WATER_DEEP.g, tdp);
     wColorArr[o + 2] = lerp(WATER_SHALLOW.b, WATER_DEEP.b, tdp);
-    wColorArr[o + 3] = smoothstep(0.04, 0.3, depth) * 0.82;
+    // 岸辺は透明に近く（浅瀬で砂底が透けて明るく）→ 後付け感をなくす
+    wColorArr[o + 3] = smoothstep(0.03, 0.55, depth) * 0.86;
   }
 
   function updateRegion(ix0, ix1, iz0, iz1) {
@@ -400,6 +413,10 @@ export function createTerrain() {
   function setWaterDetail(scale) {
     waterMat.normalScale.set(scale, scale);
   }
+  function setWaterEnv(env) {
+    waterMat.envMap = env;
+    waterMat.needsUpdate = true;
+  }
 
   let wt = 0;
   let wlast = performance.now();
@@ -408,7 +425,8 @@ export function createTerrain() {
     const dt = Math.min(0.05, (now - wlast) / 1000);
     wlast = now;
     wt += dt;
-    waterNormal.offset.x = (wt * 0.04) % 1; // 上流→下流の流れ感
+    // 一定方向へスクロール＝流れているように見せる
+    waterNormal.offset.x = (wt * 0.06) % 1;
     waterNormal.offset.y = (wt * 0.05) % 1;
   }
 
@@ -440,6 +458,7 @@ export function createTerrain() {
     setPaintMaterial,
     setAO,
     setWaterDetail,
+    setWaterEnv,
     updateWater,
     reset,
     cell,
