@@ -14,8 +14,8 @@ const SRC_RATE = 1.4; // 水源の湧き出し速度（深さ/秒）
 const SRC_MAX = 2.2; // 水源セルの最大深さ
 const MAX_SOURCES = 48;
 
-const SHALLOW = new THREE.Color(0x9fe3ea);
-const DEEP = new THREE.Color(0x2f7fae);
+const SHALLOW = new THREE.Color(0x4fb0c8);
+const DEEP = new THREE.Color(0x12537a);
 
 export function createFluid({ scene, terrain }) {
   const SIZE = terrain.size;
@@ -29,6 +29,7 @@ export function createFluid({ scene, terrain }) {
   let terr = new Float32Array(res * res);
   let depth = new Float32Array(res * res);
   let depth2 = new Float32Array(res * res);
+  let rdepth = new Float32Array(res * res); // 描画用に時間平滑した水深（ちらつき防止）
 
   const sources = []; // ワールド座標 {x,z}
   const strokeCells = new Set(); // 1ストローク内の重複トグル防止
@@ -96,6 +97,7 @@ export function createFluid({ scene, terrain }) {
     terr = new Float32Array(res * res);
     depth = new Float32Array(res * res);
     depth2 = new Float32Array(res * res);
+    rdepth = new Float32Array(res * res);
     sampleTerrain();
   }
 
@@ -159,8 +161,8 @@ export function createFluid({ scene, terrain }) {
           depth[i] = 0;
         } else if (depth[i] < 1e-4) {
           depth[i] = 0;
-        } else {
-          depth[i] *= 0.999; // 微小蒸発で薄い膜を消す
+        } else if (depth[i] < 0.02) {
+          depth[i] *= 0.985; // ごく薄い膜だけ徐々に消す（窪地に溜まる池は残る）
         }
       }
     }
@@ -169,16 +171,22 @@ export function createFluid({ scene, terrain }) {
 
   function updateMesh() {
     for (let i = 0; i < res * res; i++) {
-      const d = depth[i];
+      // 時間平滑：水深の急な振動を抑えてちらつきを防ぐ
+      let rd = rdepth[i];
+      rd += (depth[i] - rd) * 0.5;
+      if (rd < 0.004) rd = 0;
+      rdepth[i] = rd;
+
       const o = i * 4;
-      if (d > 0.01) {
-        posAttr.setY(i, terr[i] + d);
-        const t = smoothstep(0.06, 0.9, d);
+      if (rd > 0.012) {
+        // 地形より少し上げて、粗い水格子が細かい地形を貫通してちらつくのを防ぐ
+        posAttr.setY(i, terr[i] + rd + 0.04);
+        const t = smoothstep(0.06, 0.85, rd);
         colorArr[o] = lerp(SHALLOW.r, DEEP.r, t);
         colorArr[o + 1] = lerp(SHALLOW.g, DEEP.g, t);
         colorArr[o + 2] = lerp(SHALLOW.b, DEEP.b, t);
-        // 薄い流れもはっきり見えるよう下限を持たせる
-        colorArr[o + 3] = 0.3 + smoothstep(0.03, 0.7, d) * 0.55;
+        // 濃いめ＆下限を高めにして薄い流れも安定して見える
+        colorArr[o + 3] = 0.55 + smoothstep(0.04, 0.7, rd) * 0.4;
       } else {
         posAttr.setY(i, terr[i]);
         colorArr[o + 3] = 0;
@@ -288,6 +296,7 @@ export function createFluid({ scene, terrain }) {
       }
     }
     depth.fill(0);
+    rdepth.fill(0);
     if (data.n === N && Array.isArray(data.depth)) {
       for (let i = 0; i + 1 < data.depth.length; i += 2) {
         const k = data.depth[i];
@@ -300,6 +309,7 @@ export function createFluid({ scene, terrain }) {
   function clear() {
     sources.length = 0;
     depth.fill(0);
+    rdepth.fill(0);
     updateMesh();
   }
 
