@@ -96,6 +96,9 @@ export function createTerrain() {
     normalScale: new THREE.Vector2(0.6, 0.6),
     envMapIntensity: 0.7,
     depthWrite: false,
+    polygonOffset: true, // 岸辺の Z-fighting 防止
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
   });
   const waterMesh = new THREE.Mesh(waterGeo, waterMat);
   waterMesh.frustumCulled = false;

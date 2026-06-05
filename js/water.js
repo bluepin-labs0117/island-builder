@@ -25,6 +25,9 @@ export function createWater(level = WATER_LEVEL) {
     normalScale: new THREE.Vector2(0.7, 0.7),
     envMapIntensity: 0.7,
     depthWrite: false,
+    polygonOffset: true, // 岸辺の Z-fighting 防止
+    polygonOffsetFactor: -1.5,
+    polygonOffsetUnits: -1.5,
   });
 
   const mesh = new THREE.Mesh(geometry, material);

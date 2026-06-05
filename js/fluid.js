@@ -29,7 +29,8 @@ export function createFluid({ scene, terrain }) {
   let terr = new Float32Array(res * res);
   let depth = new Float32Array(res * res);
   let depth2 = new Float32Array(res * res);
-  let rdepth = new Float32Array(res * res); // 描画用に時間平滑した水深（ちらつき防止）
+  let rdepth = new Float32Array(res * res); // 時間平滑した水深（ちらつき防止）
+  let ddisp = new Float32Array(res * res); // さらに空間平滑した描画用の水深（フチをなめらかに）
 
   const sources = []; // ワールド座標 {x,z}
   const strokeCells = new Set(); // 1ストローク内の重複トグル防止
@@ -65,13 +66,17 @@ export function createFluid({ scene, terrain }) {
     material = new THREE.MeshStandardMaterial({
       vertexColors: true,
       transparent: true,
-      alphaTest: 0.02,
+      alphaTest: 0.012,
       roughness: 0.09,
       metalness: 0.0,
       normalMap,
       normalScale: new THREE.Vector2(detail, detail),
       envMapIntensity: 0.7,
       depthWrite: false,
+      // 地面と水面が近い所での Z-fighting（点滅）を防ぐ：水を深度的に手前へ寄せる
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
     });
     if (env) material.envMap = env;
 
@@ -98,6 +103,7 @@ export function createFluid({ scene, terrain }) {
     depth = new Float32Array(res * res);
     depth2 = new Float32Array(res * res);
     rdepth = new Float32Array(res * res);
+    ddisp = new Float32Array(res * res);
     sampleTerrain();
   }
 
@@ -170,23 +176,35 @@ export function createFluid({ scene, terrain }) {
   }
 
   function updateMesh() {
+    // 1) 時間平滑：水深の急な振動を抑える
     for (let i = 0; i < res * res; i++) {
-      // 時間平滑：水深の急な振動を抑えてちらつきを防ぐ
-      let rd = rdepth[i];
-      rd += (depth[i] - rd) * 0.5;
-      if (rd < 0.004) rd = 0;
+      let rd = rdepth[i] + (depth[i] - rdepth[i]) * 0.5;
+      if (rd < 0.003) rd = 0;
       rdepth[i] = rd;
-
+    }
+    // 2) 空間平滑：フチのガタつきをならし、単一セルの点滅を抑える
+    for (let iz = 0; iz < res; iz++) {
+      for (let ix = 0; ix < res; ix++) {
+        const i = iz * res + ix;
+        const l = rdepth[ix > 0 ? i - 1 : i];
+        const r = rdepth[ix < res - 1 ? i + 1 : i];
+        const d = rdepth[iz > 0 ? i - res : i];
+        const u = rdepth[iz < res - 1 ? i + res : i];
+        ddisp[i] = rdepth[i] * 0.5 + (l + r + d + u) * 0.125;
+      }
+    }
+    // 3) 描画：水面を地形より少し上げ、深さで色と透明度を変える
+    for (let i = 0; i < res * res; i++) {
+      const dd = ddisp[i];
       const o = i * 4;
-      if (rd > 0.012) {
-        // 地形より少し上げて、粗い水格子が細かい地形を貫通してちらつくのを防ぐ
-        posAttr.setY(i, terr[i] + rd + 0.04);
-        const t = smoothstep(0.06, 0.85, rd);
+      if (dd > 0.008) {
+        posAttr.setY(i, terr[i] + dd + 0.025);
+        const t = smoothstep(0.05, 0.9, dd);
         colorArr[o] = lerp(SHALLOW.r, DEEP.r, t);
         colorArr[o + 1] = lerp(SHALLOW.g, DEEP.g, t);
         colorArr[o + 2] = lerp(SHALLOW.b, DEEP.b, t);
-        // 濃いめ＆下限を高めにして薄い流れも安定して見える
-        colorArr[o + 3] = 0.55 + smoothstep(0.04, 0.7, rd) * 0.4;
+        // 浅い所は透明寄り、深い所は濃く不透明（下限を確保して消えかかりを防ぐ）
+        colorArr[o + 3] = 0.32 + smoothstep(0.03, 0.6, dd) * 0.6;
       } else {
         posAttr.setY(i, terr[i]);
         colorArr[o + 3] = 0;
