@@ -11,6 +11,7 @@ import { createTerrain, PAINT_IDS } from './terrain.js';
 import { createControls } from './controls.js';
 import { createTerrainEditor } from './terrainEditor.js';
 import { createObjects } from './objects.js';
+import { createBuildingKit } from './buildingKit.js';
 import { createFluid } from './fluid.js';
 import { createPlaceEditor } from './placeEditor.js';
 import { createUI } from './ui.js';
@@ -42,8 +43,15 @@ function init() {
   scene.add(terrain.mesh);
   scene.add(terrain.waterMesh);
 
+  // 建物キット（glTFの家プレハブ）。非同期ロード、完了したら実モデルへ差し替え。
+  const buildingKit = createBuildingKit();
+
   // 設置オブジェクト
-  const objects = createObjects({ scene, terrain });
+  const objects = createObjects({ scene, terrain, buildingKit });
+
+  buildingKit.ready
+    .then(() => objects.reground()) // ロード完了でフォールバックの箱を実モデルへ
+    .catch((e) => console.error('[buildingKit] 準備に失敗:', e));
 
   // 流体（水源から流れる水）
   const fluid = createFluid({ scene, terrain });
@@ -99,6 +107,7 @@ function init() {
     onStrength: (v) => editor.setStrength(v),
     onPaintMaterial: (name) => terrain.setPaintMaterial(PAINT_IDS[name]),
     onPalette: (t) => place.setPalette(t),
+    onHouseVariant: (i) => place.setHouseVariant(i),
     onRotate: () => place.rotateSelected(),
     onDelete: () => place.deleteSelected(),
     onClearSources: () => fluid.clearSources(),

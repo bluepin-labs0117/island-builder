@@ -162,9 +162,31 @@ export function createUI(opts) {
     b.dataset.pal = p.id;
     b.addEventListener('click', () => {
       setActive(palBtns, 'pal', p.id);
+      houseRow.classList.toggle('hidden', p.id !== 'house'); // 家のときだけ種類選択
       opts.onPalette(p.id);
     });
     paletteRow.appendChild(b);
+    return b;
+  });
+
+  // 家の種類サブパレット（家選択時のみ表示）
+  const HOUSES = [
+    { id: 0, label: '🏠 家1' },
+    { id: 1, label: '🏠 家2' },
+    { id: 2, label: '🏠 家3' },
+  ];
+  const houseRow = document.createElement('div');
+  houseRow.className = 'btn-row house-row hidden';
+  const houseBtns = HOUSES.map((h) => {
+    const b = document.createElement('button');
+    b.className = 'ui-btn chip-btn';
+    b.textContent = h.label;
+    b.dataset.house = String(h.id);
+    b.addEventListener('click', () => {
+      setActive(houseBtns, 'house', String(h.id));
+      opts.onHouseVariant(h.id);
+    });
+    houseRow.appendChild(b);
     return b;
   });
 
@@ -184,7 +206,7 @@ export function createUI(opts) {
   hint.className = 'hint';
   hint.textContent = '地面をタップで設置 / 置いた物をタップで選択';
 
-  placePanel.append(paletteRow, selRow, hint);
+  placePanel.append(paletteRow, houseRow, selRow, hint);
 
   // ===== トースト =====
   const toastEl = document.createElement('div');
@@ -225,6 +247,7 @@ export function createUI(opts) {
   setActive(toolBtns, 'tool', 'raise');
   setActive(matBtns, 'mat', 'grass');
   setActive(palBtns, 'pal', 'tree');
+  setActive(houseBtns, 'house', '0');
   modeBtns.forEach((b) => b.classList.toggle('active', b.dataset.mode === 'camera'));
   editPanel.classList.add('hidden');
   placePanel.classList.add('hidden');

@@ -27,6 +27,7 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
 
   let mode = 'camera';
   let palette = 'tree';
+  let houseVariant = 0;
   let selected = null; // {type,index}
 
   let down = null; // {id,x,y,t,moved}
@@ -107,7 +108,7 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
         return;
       }
 
-      const ok = objects.place(palette, p.x, p.z);
+      const ok = objects.place(palette, p.x, p.z, palette === 'house' ? houseVariant : 0);
       if (!ok) {
         ui.toast(`設置できる数の上限（${objects.MAX}個）に達しました`);
         return;
@@ -179,6 +180,10 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
     palette = type;
   }
 
+  function setHouseVariant(i) {
+    houseVariant = i | 0;
+  }
+
   function rotateSelected() {
     if (!selected) return;
     objects.rotate(selected, Math.PI / 6);
@@ -191,5 +196,5 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
     clearSelection();
   }
 
-  return { setMode, setPalette, rotateSelected, deleteSelected, clearSelection };
+  return { setMode, setPalette, setHouseVariant, rotateSelected, deleteSelected, clearSelection };
 }

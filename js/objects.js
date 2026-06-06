@@ -1,43 +1,40 @@
 // objects.js
-// 設置オブジェクトの管理。種類ごとに InstancedMesh を使い、同じ種類は
-// 1ドローコールにまとめて軽量に保つ。
+// 設置オブジェクトの管理。
+//  - 岩・木：種類ごとに InstancedMesh（1ドローコール）で軽量に。
+//  - 家：建物キット(glTF)のプレハブをクローン配置（複数バリアント・実モデル）。
 //
-// 各レコードは { x, z, rotY } のみ保持し、地面の高さ・傾きは terrain から
-// 都度求めて接地する（地形が変わっても破綻しにくい）。
+// 各レコードは { x, z, rotY (, variant) } のみ保持し、地面の高さは terrain から
+// 都度求めて接地する。家の土台（基礎）は家の footprint に合わせて自動生成。
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 export const TYPES = ['rock', 'tree', 'house'];
+const INSTANCED = ['rock', 'tree']; // InstancedMesh で描く種類
 export const MAX_OBJECTS = 300;
 
-// 種類ごとの設定：tiltK=地形の傾きへ沿う度合い（家・木は0で常に垂直、岩のみ傾く）
 const DEFS = {
   rock: { tiltK: 0.7, scale: 1.0 },
   tree: { tiltK: 0.0, scale: 1.0 },
-  house: { tiltK: 0.0, scale: 1.0 },
 };
 
 /**
  * @param {object} deps
  * @param {THREE.Scene} deps.scene
- * @param {object} deps.terrain - createTerrain() の戻り値
+ * @param {object} deps.terrain
+ * @param {object} deps.buildingKit - createBuildingKit() の戻り値（家のプレハブ供給）
  */
-export function createObjects({ scene, terrain }) {
-  const geoms = {
-    rock: makeRock(),
-    tree: makeTree(),
-    house: makeHouse(),
-  };
+export function createObjects({ scene, terrain, buildingKit }) {
+  const geoms = { rock: makeRock(), tree: makeTree() };
 
   const meshes = {};
-  const records = {}; // type -> [{x,z,rotY}]
-  for (const type of TYPES) {
+  const records = { rock: [], tree: [], house: [] };
+  for (const type of INSTANCED) {
     const mat = new THREE.MeshStandardMaterial({
       vertexColors: true,
       roughness: 0.9,
       metalness: 0.0,
-      flatShading: true, // ローポリらしい角張った陰影
+      flatShading: true,
     });
     const inst = new THREE.InstancedMesh(geoms[type], mat, MAX_OBJECTS);
     inst.count = 0;
@@ -47,11 +44,15 @@ export function createObjects({ scene, terrain }) {
     inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     inst.name = `obj-${type}`;
     meshes[type] = inst;
-    records[type] = [];
     scene.add(inst);
   }
 
-  // 家の土台（基礎）：灰色の四角い柱を InstancedMesh で。家1棟につき最大4本。
+  // 家：クローンを入れるコンテナ
+  const houseContainer = new THREE.Group();
+  houseContainer.name = 'houses';
+  scene.add(houseContainer);
+
+  // 家の土台（基礎）：灰色の四角い柱を InstancedMesh で
   const FOUND_CAP = MAX_OBJECTS * 4;
   const pillarGeo = paint(new THREE.BoxGeometry(1, 1, 1), 0x9a9a9a);
   const foundationMesh = new THREE.InstancedMesh(
@@ -67,22 +68,10 @@ export function createObjects({ scene, terrain }) {
   foundationMesh.name = 'foundations';
   scene.add(foundationMesh);
 
-  // 家の底面の半サイズ（少し内側）と柱の太さ
-  const HOUSE_HX = 0.42;
-  const HOUSE_HZ = 0.36;
-  const PILLAR_W = 0.26;
-  const FOUND_CORNERS = [
-    [HOUSE_HX, HOUSE_HZ],
-    [HOUSE_HX, -HOUSE_HZ],
-    [-HOUSE_HX, HOUSE_HZ],
-    [-HOUSE_HX, -HOUSE_HZ],
-  ];
-
   let total = 0;
   const cb = { onChange: null };
   const emit = () => cb.onChange && cb.onChange();
 
-  // 行列合成用の使い回しオブジェクト
   const _pos = new THREE.Vector3();
   const _scl = new THREE.Vector3();
   const _qY = new THREE.Quaternion();
@@ -91,6 +80,7 @@ export function createObjects({ scene, terrain }) {
   const _m = new THREE.Matrix4();
   const _up = new THREE.Vector3(0, 1, 0);
 
+  // --- 岩・木（インスタンス） ---
   function composeInto(type, rec, m) {
     const def = DEFS[type];
     const y = terrain.heightAt(rec.x, rec.z);
@@ -108,7 +98,7 @@ export function createObjects({ scene, terrain }) {
     m.compose(_pos, _qTilt, _scl);
   }
 
-  function rebuild(type) {
+  function rebuildInstanced(type) {
     const recs = records[type];
     const mesh = meshes[type];
     for (let i = 0; i < recs.length; i++) {
@@ -117,29 +107,51 @@ export function createObjects({ scene, terrain }) {
     }
     mesh.count = recs.length;
     mesh.instanceMatrix.needsUpdate = true;
-    // 家を作り直したら土台も作り直す（移動・回転・削除に追従）
-    if (type === 'house') rebuildFoundations();
   }
 
-  // 家の四隅と真下の地面の隙間を、灰色の柱で埋める
+  // --- 家（プレハブのクローン） ---
+  function rebuildHouses() {
+    // 既存クローンを外す（ジオメトリ/マテリアルは共有なので dispose 不要）
+    while (houseContainer.children.length) houseContainer.remove(houseContainer.children[0]);
+    const recs = records.house;
+    for (let i = 0; i < recs.length; i++) {
+      const rec = recs[i];
+      const clone = buildingKit.getPrefab(rec.variant || 0).clone(true);
+      clone.position.set(rec.x, terrain.heightAt(rec.x, rec.z), rec.z);
+      clone.rotation.y = rec.rotY; // 家は常に垂直
+      clone.userData.recordIndex = i;
+      houseContainer.add(clone);
+    }
+    rebuildFoundations();
+  }
+
+  // 家の四隅と真下の地面の隙間を、灰色の柱で埋める（footprint はバリアント依存）
   function rebuildFoundations() {
-    const recs = records['house'];
+    const recs = records.house;
     let p = 0;
     for (const rec of recs) {
-      const baseY = terrain.heightAt(rec.x, rec.z); // 家の底面の高さ
+      const fp = buildingKit.getFootprint(rec.variant || 0);
+      const hx = fp.hx * 0.82;
+      const hz = fp.hz * 0.82;
+      const pw = Math.min(hx, hz) * 0.6;
+      const corners = [
+        [hx, hz],
+        [hx, -hz],
+        [-hx, hz],
+        [-hx, -hz],
+      ];
+      const baseY = terrain.heightAt(rec.x, rec.z);
       const cos = Math.cos(rec.rotY);
       const sin = Math.sin(rec.rotY);
-      for (const [lx, lz] of FOUND_CORNERS) {
-        // 家の回転に合わせて四隅をワールド座標へ
+      for (const [lx, lz] of corners) {
         const wx = rec.x + lx * cos - lz * sin;
         const wz = rec.z + lx * sin + lz * cos;
-        const g = terrain.heightAt(wx, wz);
-        const gap = baseY - g;
-        if (gap <= 0.05) continue; // 地面が底面以上なら土台不要
-        const h = gap + 0.06; // 少し地面へ食い込ませる
+        const gap = baseY - terrain.heightAt(wx, wz);
+        if (gap <= 0.05) continue;
+        const h = gap + 0.06;
         _qY.setFromAxisAngle(_up, rec.rotY);
-        _pos.set(wx, baseY - h / 2, wz); // 上端を家の底面に合わせる
-        _scl.set(PILLAR_W, h, PILLAR_W);
+        _pos.set(wx, baseY - h / 2, wz);
+        _scl.set(pw, h, pw);
         _m.compose(_pos, _qY, _scl);
         foundationMesh.setMatrixAt(p++, _m);
         if (p >= FOUND_CAP) break;
@@ -150,26 +162,32 @@ export function createObjects({ scene, terrain }) {
     foundationMesh.instanceMatrix.needsUpdate = true;
   }
 
+  function rebuild(type) {
+    if (type === 'house') rebuildHouses();
+    else rebuildInstanced(type);
+  }
+
   function rebuildAll() {
-    for (const type of TYPES) rebuild(type);
-    rebuildFoundations();
+    rebuildInstanced('rock');
+    rebuildInstanced('tree');
+    rebuildHouses();
   }
 
   // --- 公開API ---
-
-  function place(type, x, z) {
+  function place(type, x, z, variant = 0) {
     if (total >= MAX_OBJECTS) return false;
-    records[type].push({ x, z, rotY: 0 });
+    const rec = { x, z, rotY: 0 };
+    if (type === 'house') rec.variant = variant | 0;
+    records[type].push(rec);
     total++;
     rebuild(type);
     emit();
     return true;
   }
 
-  // レイキャストで最も手前のオブジェクトを拾う
   function pick(raycaster) {
     let best = null;
-    for (const type of TYPES) {
+    for (const type of INSTANCED) {
       const mesh = meshes[type];
       if (mesh.count === 0) continue;
       const hits = raycaster.intersectObject(mesh, false);
@@ -179,10 +197,18 @@ export function createObjects({ scene, terrain }) {
         }
       }
     }
+    // 家（コンテナ内のクローン）
+    const hh = raycaster.intersectObject(houseContainer, true);
+    if (hh.length) {
+      let o = hh[0].object;
+      while (o && o.userData.recordIndex === undefined) o = o.parent;
+      if (o && (!best || hh[0].distance < best.distance)) {
+        best = { type: 'house', index: o.userData.recordIndex, distance: hh[0].distance };
+      }
+    }
     return best;
   }
 
-  // 選択オブジェクトのワールド座標（選択リング配置用）
   function positionOf(sel) {
     const rec = records[sel.type][sel.index];
     if (!rec) return null;
@@ -210,12 +236,9 @@ export function createObjects({ scene, terrain }) {
     const out = [];
     for (const type of TYPES) {
       for (const rec of records[type]) {
-        out.push({
-          type,
-          x: round(rec.x),
-          z: round(rec.z),
-          rotY: round(rec.rotY),
-        });
+        const o = { type, x: round(rec.x), z: round(rec.z), rotY: round(rec.rotY) };
+        if (type === 'house') o.variant = rec.variant || 0;
+        out.push(o);
       }
     }
     return out;
@@ -227,7 +250,9 @@ export function createObjects({ scene, terrain }) {
     if (Array.isArray(list)) {
       for (const o of list) {
         if (!TYPES.includes(o.type) || total >= MAX_OBJECTS) continue;
-        records[o.type].push({ x: o.x, z: o.z, rotY: o.rotY || 0 });
+        const rec = { x: o.x, z: o.z, rotY: o.rotY || 0 };
+        if (o.type === 'house') rec.variant = o.variant || 0;
+        records[o.type].push(rec);
         total++;
       }
     }
@@ -241,13 +266,11 @@ export function createObjects({ scene, terrain }) {
     emit();
   }
 
-  // 地形が変わった時に接地し直す（必要なら）
   function reground() {
     rebuildAll();
   }
 
   return {
-    meshes: TYPES.map((t) => meshes[t]),
     place,
     pick,
     positionOf,
@@ -263,7 +286,7 @@ export function createObjects({ scene, terrain }) {
   };
 }
 
-// --- 仮の3D素材（ローポリ・頂点カラー） ---------------------------------
+// --- 仮の3D素材（岩・木は当面ローポリのまま） -----------------------------
 
 function paint(geo, hex) {
   const c = new THREE.Color(hex);
@@ -278,16 +301,13 @@ function paint(geo, hex) {
   return geo;
 }
 
-// 岩：ゴツゴツした角張った塊。頂点をノイズで動かして硬質感を、
-// 頂点カラーに濃淡のムラを付けて面の陰影を強める。
 function makeRock() {
-  const g = new THREE.IcosahedronGeometry(0.55, 1); // detail=1 で面を増やす
+  const g = new THREE.IcosahedronGeometry(0.55, 1);
   const pos = g.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const y = pos.getY(i);
     const z = pos.getZ(i);
-    // 方向ごとに不規則に伸縮させてゴツゴツに
     const n =
       Math.sin(x * 9.1 + y * 4.7) * 0.5 +
       Math.sin(y * 7.3 + z * 5.9) * 0.5 +
@@ -299,7 +319,6 @@ function makeRock() {
   g.translate(0, 0.3, 0);
   g.computeVertexNormals();
 
-  // 頂点カラーに明暗のムラ
   const base = new THREE.Color(0x8a857d);
   const dark = new THREE.Color(0x595550);
   const arr = new Float32Array(pos.count * 3);
@@ -319,23 +338,12 @@ function lerpN(a, b, t) {
   return a + (b - a) * t;
 }
 
-// 木：茶色い幹＋緑の円錐の葉
 function makeTree() {
   const trunk = paint(new THREE.CylinderGeometry(0.12, 0.16, 0.8, 6), 0x6b4a2b);
   trunk.translate(0, 0.4, 0);
   const leaves = paint(new THREE.ConeGeometry(0.6, 1.3, 7), 0x4f9e3a);
   leaves.translate(0, 1.35, 0);
   return mergeGeometries([trunk, leaves]);
-}
-
-// 家：白っぽい箱＋三角屋根
-function makeHouse() {
-  const body = paint(new THREE.BoxGeometry(1.0, 0.7, 0.85), 0xece7dc);
-  body.translate(0, 0.35, 0);
-  const roof = paint(new THREE.ConeGeometry(0.78, 0.55, 4), 0xb24a3a);
-  roof.rotateY(Math.PI / 4); // 四角錐を箱に合わせる
-  roof.translate(0, 0.98, 0);
-  return mergeGeometries([body, roof]);
 }
 
 function round(v) {
