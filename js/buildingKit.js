@@ -66,6 +66,22 @@ const SPECS = [
 
 export const HOUSE_VARIANTS = SPECS.map((s, i) => ({ index: i, id: s.id }));
 
+// 窓ガラス・ドア・内部コアの素材（全プレハブ・全クローンで共有＝軽い）。
+// ガラスは不透明の薄青（透明描画のコストを避けつつ「ガラス」に見せる）。
+// 内部コアは暗い不透明箱で、窓やドアの開口から向こうが透けるのを防ぐ。
+const PRIM_MATS = {
+  glass: new THREE.MeshStandardMaterial({
+    color: 0x9ec3d6,
+    emissive: 0x21303a,
+    emissiveIntensity: 0.6,
+    roughness: 0.2,
+    metalness: 0.0,
+    side: THREE.DoubleSide,
+  }),
+  door: new THREE.MeshStandardMaterial({ color: 0x5a3d24, roughness: 0.85, metalness: 0.0 }),
+  interior: new THREE.MeshStandardMaterial({ color: 0x231f18, roughness: 1.0, metalness: 0.0 }),
+};
+
 // エッジ上の壁/床タイルの中心座標（半サイズ h、2幅モジュール）
 function centers(h) {
   const a = [];
@@ -83,11 +99,32 @@ function buildPlacements(spec) {
   // 床タイル
   for (const cz of sz) for (const cx of sx) P.push({ file: floor, pos: [cx, 0, cz], rotY: 0 });
 
-  // 周囲の壁（南=ドア、北/側面=窓を中心に配置）
-  sx.forEach((cx, i) => P.push({ file: i === 0 ? door : wall, pos: [cx, 0, -hz], rotY: 0 }));
-  sx.forEach((cx) => P.push({ file: win, pos: [cx, 0, hz], rotY: Math.PI }));
-  sz.forEach((cz, i) => P.push({ file: i === 0 ? win : wall, pos: [-hx, 0, cz], rotY: Math.PI / 2 }));
-  sz.forEach((cz, i) => P.push({ file: i === 0 ? win : wall, pos: [hx, 0, cz], rotY: -Math.PI / 2 }));
+  // 周囲の壁（南=ドア、北/側面=窓）。開口には窓ガラス/ドア板を同じ位置・向きで重ねる。
+  sx.forEach((cx, i) => {
+    if (i === 0) {
+      P.push({ file: door, pos: [cx, 0, -hz], rotY: 0 });
+      P.push({ prim: 'door', pos: [cx, 0, -hz], rotY: 0 });
+    } else {
+      P.push({ file: wall, pos: [cx, 0, -hz], rotY: 0 });
+    }
+  });
+  sx.forEach((cx) => {
+    P.push({ file: win, pos: [cx, 0, hz], rotY: Math.PI });
+    P.push({ prim: 'glass', pos: [cx, 0, hz], rotY: Math.PI });
+  });
+  sz.forEach((cz, i) => {
+    const isWin = i === 0;
+    P.push({ file: isWin ? win : wall, pos: [-hx, 0, cz], rotY: Math.PI / 2 });
+    if (isWin) P.push({ prim: 'glass', pos: [-hx, 0, cz], rotY: Math.PI / 2 });
+  });
+  sz.forEach((cz, i) => {
+    const isWin = i === 0;
+    P.push({ file: isWin ? win : wall, pos: [hx, 0, cz], rotY: -Math.PI / 2 });
+    if (isWin) P.push({ prim: 'glass', pos: [hx, 0, cz], rotY: -Math.PI / 2 });
+  });
+
+  // 内部コア：壁の少し内側に暗い不透明箱を入れ、開口から向こうが透けないようにする
+  P.push({ prim: 'interior', size: [hx, hz] });
 
   // 屋根（壁の上に乗せる。サイズは footprint に合わせてスケール）
   P.push({ file: roof, pos: [0, roofY, 0], rotY: 0, scale: roofScale });
@@ -154,9 +191,39 @@ function sanitize(geo) {
   return geo;
 }
 
+// 開口を塞ぐ簡易ジオメトリ（窓ガラス/ドア板/内部コア）を家空間の座標で生成
+function makePrimGeo(pl) {
+  if (pl.prim === 'interior') {
+    const [hx, hz] = pl.size; // 壁の少し内側に収める
+    const geo = new THREE.BoxGeometry(
+      Math.max(0.3, 2 * (hx - 0.12)),
+      3.0,
+      Math.max(0.3, 2 * (hz - 0.12))
+    );
+    geo.translate(0, 1.55, 0);
+    return geo;
+  }
+  let geo;
+  if (pl.prim === 'glass') {
+    geo = new THREE.PlaneGeometry(1.3, 1.0);
+    geo.translate(0, 1.6, -0.08); // 壁の開口（やや外側）に配置
+  } else if (pl.prim === 'door') {
+    geo = new THREE.BoxGeometry(1.0, 2.05, 0.1);
+    geo.translate(0, 1.02, -0.08);
+  } else {
+    return null;
+  }
+  // 壁と同じ位置・向きへ
+  const t = new THREE.Vector3(pl.pos[0], pl.pos[1], pl.pos[2]);
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, pl.rotY, 0));
+  geo.applyMatrix4(new THREE.Matrix4().compose(t, q, new THREE.Vector3(1, 1, 1)));
+  return geo;
+}
+
 // 仕様 + ロード済み部品 → 1つのプレハブ Group（マテリアル単位でマージ）
 function assemble(spec, cache) {
   const groups = new Map(); // materialName -> { material, geoms:[] }
+  const prims = { glass: [], door: [], interior: [] }; // 開口塞ぎ用
   const partM = new THREE.Matrix4();
   const _q = new THREE.Quaternion();
   const _e = new THREE.Euler();
@@ -164,6 +231,11 @@ function assemble(spec, cache) {
   const _s = new THREE.Vector3();
 
   for (const pl of buildPlacements(spec)) {
+    if (pl.prim) {
+      const geo = makePrimGeo(pl);
+      if (geo) prims[pl.prim].push(geo);
+      continue;
+    }
     const part = cache[pl.file];
     if (!part) continue;
     const sc = pl.scale || 1;
@@ -195,6 +267,18 @@ function assemble(spec, cache) {
     const mesh = new THREE.Mesh(merged, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
+    inner.add(mesh);
+  }
+
+  // 開口塞ぎ（窓ガラス/ドア/内部コア）。同種はマージして1メッシュに。
+  for (const type of ['interior', 'door', 'glass']) {
+    const arr = prims[type];
+    if (!arr.length) continue;
+    const g = arr.length === 1 ? arr[0] : mergeGeometries(arr, false);
+    if (!g) continue;
+    const mesh = new THREE.Mesh(g, PRIM_MATS[type]);
+    mesh.castShadow = false; // 内側の補助なので影は省略（軽量化）
+    mesh.receiveShadow = type !== 'glass';
     inner.add(mesh);
   }
 
