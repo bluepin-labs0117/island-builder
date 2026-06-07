@@ -28,6 +28,7 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
   let mode = 'camera';
   let palette = 'tree';
   let houseVariant = 0;
+  let placeRotY = 0; // 設置時の向き（家用、90度ずつ）
   let selected = null; // {type,index}
 
   let down = null; // {id,x,y,t,moved}
@@ -108,7 +109,13 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
         return;
       }
 
-      const ok = objects.place(palette, p.x, p.z, palette === 'house' ? houseVariant : 0);
+      const ok = objects.place(
+        palette,
+        p.x,
+        p.z,
+        palette === 'house' ? houseVariant : 0,
+        palette === 'house' ? placeRotY : 0
+      );
       if (!ok) {
         ui.toast(`設置できる数の上限（${objects.MAX}個）に達しました`);
         return;
@@ -184,9 +191,21 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
     houseVariant = i | 0;
   }
 
+  // 設置時の向きを90度ずつ回す。家が選択中ならその家を90度回す。
+  // 戻り値は現在の設置角度（度）。
+  function rotatePlacement() {
+    if (selected) {
+      objects.rotate(selected, Math.PI / 2);
+      showRingAt(selected);
+    } else {
+      placeRotY = (placeRotY + Math.PI / 2) % (Math.PI * 2);
+    }
+    return Math.round((placeRotY * 180) / Math.PI);
+  }
+
   function rotateSelected() {
     if (!selected) return;
-    objects.rotate(selected, Math.PI / 6);
+    objects.rotate(selected, Math.PI / 2);
     showRingAt(selected);
   }
 
@@ -196,5 +215,13 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
     clearSelection();
   }
 
-  return { setMode, setPalette, setHouseVariant, rotateSelected, deleteSelected, clearSelection };
+  return {
+    setMode,
+    setPalette,
+    setHouseVariant,
+    rotatePlacement,
+    rotateSelected,
+    deleteSelected,
+    clearSelection,
+  };
 }

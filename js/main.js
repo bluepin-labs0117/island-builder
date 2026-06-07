@@ -108,6 +108,7 @@ function init() {
     onPaintMaterial: (name) => terrain.setPaintMaterial(PAINT_IDS[name]),
     onPalette: (t) => place.setPalette(t),
     onHouseVariant: (i) => place.setHouseVariant(i),
+    onRotateHouse: () => place.rotatePlacement(),
     onRotate: () => place.rotateSelected(),
     onDelete: () => place.deleteSelected(),
     onClearSources: () => fluid.clearSources(),

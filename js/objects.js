@@ -178,9 +178,9 @@ export function createObjects({ scene, terrain, buildingKit }) {
   }
 
   // --- 公開API ---
-  function place(type, x, z, variant = 0) {
+  function place(type, x, z, variant = 0, rotY = 0) {
     if (total >= MAX_OBJECTS) return false;
-    const rec = { x, z, rotY: 0 };
+    const rec = { x, z, rotY: rotY || 0 };
     if (type === 'house') rec.variant = variant | 0;
     records[type].push(rec);
     total++;

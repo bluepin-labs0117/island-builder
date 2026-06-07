@@ -189,6 +189,15 @@ export function createUI(opts) {
     houseRow.appendChild(b);
     return b;
   });
+  // 設置の向き（家を置く前に90度ずつ回す／家を選択中ならその家を回す）
+  const orientBtn = document.createElement('button');
+  orientBtn.className = 'ui-btn chip-btn';
+  orientBtn.textContent = '↻ 向き 0°';
+  orientBtn.addEventListener('click', () => {
+    const deg = opts.onRotateHouse();
+    orientBtn.textContent = `↻ 向き ${deg}°`;
+  });
+  houseRow.appendChild(orientBtn);
 
   const selRow = document.createElement('div');
   selRow.className = 'btn-row sel-row hidden';
