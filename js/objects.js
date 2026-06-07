@@ -1,50 +1,50 @@
 // objects.js
 // 設置オブジェクトの管理。
-//  - 岩・木：種類ごとに InstancedMesh（1ドローコール）で軽量に。
+//  - 木・岩・茂み：自然キット(KayKit, 共有アトラス1枚)のモデルを種類ごとに
+//    InstancedMesh（1種=1ドローコール）で軽量に。
 //  - 家：建物キット(glTF)のプレハブをクローン配置（複数バリアント・実モデル）。
 //
 // 各レコードは { x, z, rotY (, variant) } のみ保持し、地面の高さは terrain から
 // 都度求めて接地する。家の土台（基礎）は家の footprint に合わせて自動生成。
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { LEGACY_NATURE } from './natureKit.js';
 
-export const TYPES = ['rock', 'tree', 'house'];
-const INSTANCED = ['rock', 'tree']; // InstancedMesh で描く種類
 export const MAX_OBJECTS = 300;
-
-const DEFS = {
-  rock: { tiltK: 0.7, scale: 1.0 },
-  tree: { tiltK: 0.0, scale: 1.0 },
-};
 
 /**
  * @param {object} deps
  * @param {THREE.Scene} deps.scene
  * @param {object} deps.terrain
- * @param {object} deps.buildingKit - createBuildingKit() の戻り値（家のプレハブ供給）
+ * @param {object} deps.buildingKit - 家のプレハブ供給
+ * @param {object} deps.natureKit - 木・岩のジオメトリ/素材供給
  */
-export function createObjects({ scene, terrain, buildingKit }) {
-  const geoms = { rock: makeRock(), tree: makeTree() };
+export function createObjects({ scene, terrain, buildingKit, natureKit }) {
+  const kinds = natureKit.kinds; // [{id,cat,scale,tiltK,...}]
+  const NATURE_IDS = kinds.map((k) => k.id);
+  const DEFS = {};
+  for (const k of kinds) DEFS[k.id] = { tiltK: k.tiltK, scale: k.scale };
 
-  const meshes = {};
-  const records = { rock: [], tree: [], house: [] };
-  for (const type of INSTANCED) {
-    const mat = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.9,
-      metalness: 0.0,
-      flatShading: true,
-    });
-    const inst = new THREE.InstancedMesh(geoms[type], mat, MAX_OBJECTS);
+  const meshes = {}; // id -> InstancedMesh（ジオメトリ準備後に生成）
+  const records = { house: [] };
+  for (const id of NATURE_IDS) records[id] = [];
+
+  // 共有アトラス素材は1つ。準備できた種類だけ InstancedMesh を作る（軽量・遅延）。
+  function ensureMesh(id) {
+    if (meshes[id]) return meshes[id];
+    const geo = natureKit.getGeometry(id);
+    const mat = natureKit.getMaterial();
+    if (!geo || !mat) return null;
+    const inst = new THREE.InstancedMesh(geo, mat, MAX_OBJECTS);
     inst.count = 0;
     inst.castShadow = true;
     inst.receiveShadow = true;
     inst.frustumCulled = false;
     inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    inst.name = `obj-${type}`;
-    meshes[type] = inst;
+    inst.name = `obj-${id}`;
+    meshes[id] = inst;
     scene.add(inst);
+    return inst;
   }
 
   // 家：クローンを入れるコンテナ
@@ -81,9 +81,9 @@ export function createObjects({ scene, terrain, buildingKit }) {
   const _m = new THREE.Matrix4();
   const _up = new THREE.Vector3(0, 1, 0);
 
-  // --- 岩・木（インスタンス） ---
-  function composeInto(type, rec, m) {
-    const def = DEFS[type];
+  // --- 木・岩（インスタンス） ---
+  function composeInto(id, rec, m) {
+    const def = DEFS[id];
     const y = terrain.heightAt(rec.x, rec.z);
     _pos.set(rec.x, y, rec.z);
     _qY.setFromAxisAngle(_up, rec.rotY);
@@ -99,11 +99,17 @@ export function createObjects({ scene, terrain, buildingKit }) {
     m.compose(_pos, _qTilt, _scl);
   }
 
-  function rebuildInstanced(type) {
-    const recs = records[type];
-    const mesh = meshes[type];
+  function rebuildInstanced(id) {
+    const recs = records[id];
+    // 使われていない種類は GPU に載せない（必要になって初めてメッシュ生成）
+    let mesh = meshes[id];
+    if (!mesh) {
+      if (!recs.length) return;
+      mesh = ensureMesh(id);
+      if (!mesh) return; // ジオメトリ未準備（読み込み後 reground で反映）
+    }
     for (let i = 0; i < recs.length; i++) {
-      composeInto(type, recs[i], _m);
+      composeInto(id, recs[i], _m);
       mesh.setMatrixAt(i, _m);
     }
     mesh.count = recs.length;
@@ -172,16 +178,19 @@ export function createObjects({ scene, terrain, buildingKit }) {
   }
 
   function rebuildAll() {
-    rebuildInstanced('rock');
-    rebuildInstanced('tree');
+    for (const id of NATURE_IDS) rebuildInstanced(id);
     rebuildHouses();
   }
 
   // --- 公開API ---
-  function place(type, x, z, variant = 0, rotY = 0) {
+  // 木・岩は自然な見た目のためランダム回転（rotY未指定時）。家は指定の向き。
+  function place(type, x, z, variant = 0, rotY = null) {
     if (total >= MAX_OBJECTS) return false;
-    const rec = { x, z, rotY: rotY || 0 };
-    if (type === 'house') rec.variant = variant | 0;
+    if (!records[type]) return false; // 未知の種類
+    const isHouse = type === 'house';
+    const ry = isHouse ? rotY || 0 : rotY == null ? Math.random() * Math.PI * 2 : rotY;
+    const rec = { x, z, rotY: ry };
+    if (isHouse) rec.variant = variant | 0;
     records[type].push(rec);
     total++;
     rebuild(type);
@@ -191,13 +200,13 @@ export function createObjects({ scene, terrain, buildingKit }) {
 
   function pick(raycaster) {
     let best = null;
-    for (const type of INSTANCED) {
-      const mesh = meshes[type];
-      if (mesh.count === 0) continue;
+    for (const id of NATURE_IDS) {
+      const mesh = meshes[id];
+      if (!mesh || mesh.count === 0) continue;
       const hits = raycaster.intersectObject(mesh, false);
       if (hits.length && hits[0].instanceId != null) {
         if (!best || hits[0].distance < best.distance) {
-          best = { type, index: hits[0].instanceId, distance: hits[0].distance };
+          best = { type: id, index: hits[0].instanceId, distance: hits[0].distance };
         }
       }
     }
@@ -238,7 +247,7 @@ export function createObjects({ scene, terrain, buildingKit }) {
 
   function serialize() {
     const out = [];
-    for (const type of TYPES) {
+    for (const type of Object.keys(records)) {
       for (const rec of records[type]) {
         const o = { type, x: round(rec.x), z: round(rec.z), rotY: round(rec.rotY) };
         if (type === 'house') o.variant = rec.variant || 0;
@@ -249,14 +258,17 @@ export function createObjects({ scene, terrain, buildingKit }) {
   }
 
   function load(list) {
-    for (const type of TYPES) records[type] = [];
+    for (const k of Object.keys(records)) records[k] = [];
     total = 0;
     if (Array.isArray(list)) {
       for (const o of list) {
-        if (!TYPES.includes(o.type) || total >= MAX_OBJECTS) continue;
+        if (total >= MAX_OBJECTS) break;
+        let type = o.type;
+        if (LEGACY_NATURE[type]) type = LEGACY_NATURE[type]; // 旧セーブ tree/rock を移行
+        if (!records[type]) continue;
         const rec = { x: o.x, z: o.z, rotY: o.rotY || 0 };
-        if (o.type === 'house') rec.variant = o.variant || 0;
-        records[o.type].push(rec);
+        if (type === 'house') rec.variant = o.variant || 0;
+        records[type].push(rec);
         total++;
       }
     }
@@ -264,7 +276,7 @@ export function createObjects({ scene, terrain, buildingKit }) {
   }
 
   function clear() {
-    for (const type of TYPES) records[type] = [];
+    for (const k of Object.keys(records)) records[k] = [];
     total = 0;
     rebuildAll();
     emit();
@@ -290,64 +302,10 @@ export function createObjects({ scene, terrain, buildingKit }) {
   };
 }
 
-// --- 仮の3D素材（岩・木は当面ローポリのまま） -----------------------------
-
-function paint(geo, hex) {
-  const c = new THREE.Color(hex);
-  const n = geo.attributes.position.count;
-  const arr = new Float32Array(n * 3);
-  for (let i = 0; i < n; i++) {
-    arr[i * 3] = c.r;
-    arr[i * 3 + 1] = c.g;
-    arr[i * 3 + 2] = c.b;
-  }
-  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  return geo;
-}
-
-function makeRock() {
-  const g = new THREE.IcosahedronGeometry(0.55, 1);
-  const pos = g.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const y = pos.getY(i);
-    const z = pos.getZ(i);
-    const n =
-      Math.sin(x * 9.1 + y * 4.7) * 0.5 +
-      Math.sin(y * 7.3 + z * 5.9) * 0.5 +
-      Math.sin(z * 8.5 + x * 3.3) * 0.5;
-    const s = 1 + n * 0.22;
-    pos.setXYZ(i, x * s, y * s, z * s);
-  }
-  g.scale(1, 0.82, 1);
-  g.translate(0, 0.3, 0);
-  g.computeVertexNormals();
-
-  const base = new THREE.Color(0x8a857d);
-  const dark = new THREE.Color(0x595550);
-  const arr = new Float32Array(pos.count * 3);
-  for (let i = 0; i < pos.count; i++) {
-    const y = pos.getY(i);
-    const m = 0.5 + 0.5 * Math.sin(pos.getX(i) * 11.0 + pos.getZ(i) * 7.0);
-    const t = Math.min(1, Math.max(0, m * 0.7 + y * 0.3));
-    arr[i * 3] = lerpN(dark.r, base.r, t);
-    arr[i * 3 + 1] = lerpN(dark.g, base.g, t);
-    arr[i * 3 + 2] = lerpN(dark.b, base.b, t);
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-  return g;
-}
+// --- 基礎用の石ブロック -----------------------------
 
 function lerpN(a, b, t) {
   return a + (b - a) * t;
-}
-
-function makeTree() {
-  const trunk = paint(new THREE.CylinderGeometry(0.12, 0.16, 0.8, 6), 0x6b4a2b);
-  trunk.translate(0, 0.4, 0);
-  const leaves = paint(new THREE.ConeGeometry(0.6, 1.3, 7), 0x4f9e3a);
-  leaves.translate(0, 1.35, 0);
-  return mergeGeometries([trunk, leaves]);
 }
 
 // 基礎用の石ブロック：中心原点の単位ボックスに石色の頂点カラー（下を暗く・ムラ）を付け、

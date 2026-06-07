@@ -26,6 +26,8 @@ const MATERIALS = [
   { id: 'sand', label: '🏖 砂' },
   { id: 'rock', label: '🪨 岩' },
   { id: 'snow', label: '❄️ 雪' },
+  { id: 'path', label: '🟫 土の道' },
+  { id: 'cobble', label: '⬜ 石畳' },
 ];
 
 const PALETTE = [
@@ -162,33 +164,18 @@ export function createUI(opts) {
     b.dataset.pal = p.id;
     b.addEventListener('click', () => {
       setActive(palBtns, 'pal', p.id);
-      houseRow.classList.toggle('hidden', p.id !== 'house'); // 家のときだけ種類選択
+      populateVariants(p.id);
       opts.onPalette(p.id);
     });
     paletteRow.appendChild(b);
     return b;
   });
 
-  // 家の種類サブパレット（家選択時のみ表示）
-  const HOUSES = [
-    { id: 0, label: '🏠 家1' },
-    { id: 1, label: '🏠 家2' },
-    { id: 2, label: '🏠 家3' },
-  ];
-  const houseRow = document.createElement('div');
-  houseRow.className = 'btn-row house-row hidden';
-  const houseBtns = HOUSES.map((h) => {
-    const b = document.createElement('button');
-    b.className = 'ui-btn chip-btn';
-    b.textContent = h.label;
-    b.dataset.house = String(h.id);
-    b.addEventListener('click', () => {
-      setActive(houseBtns, 'house', String(h.id));
-      opts.onHouseVariant(h.id);
-    });
-    houseRow.appendChild(b);
-    return b;
-  });
+  // 種類サブパレット（選択中カテゴリの木/岩/家のバリアントを並べる）
+  const HOUSES = [{ label: '🏠 家1' }, { label: '🏠 家2' }, { label: '🏠 家3' }];
+  const variantRow = document.createElement('div');
+  variantRow.className = 'btn-row variant-row';
+
   // 設置の向き（家を置く前に90度ずつ回す／家を選択中ならその家を回す）
   const orientBtn = document.createElement('button');
   orientBtn.className = 'ui-btn chip-btn';
@@ -197,7 +184,30 @@ export function createUI(opts) {
     const deg = opts.onRotateHouse();
     orientBtn.textContent = `↻ 向き ${deg}°`;
   });
-  houseRow.appendChild(orientBtn);
+
+  function populateVariants(cat, silent) {
+    variantRow.innerHTML = '';
+    const items =
+      cat === 'house'
+        ? HOUSES.map((h, i) => ({ label: h.label, idx: i }))
+        : (opts.natureKinds || [])
+            .filter((k) => k.cat === cat)
+            .map((k, i) => ({ label: k.label, idx: i }));
+    const btns = [];
+    items.forEach((it, i) => {
+      const b = document.createElement('button');
+      b.className = 'ui-btn chip-btn' + (i === 0 ? ' active' : '');
+      b.textContent = it.label;
+      b.addEventListener('click', () => {
+        btns.forEach((x) => x.classList.toggle('active', x === b));
+        opts.onVariant(cat, it.idx);
+      });
+      variantRow.appendChild(b);
+      btns.push(b);
+    });
+    if (cat === 'house') variantRow.appendChild(orientBtn);
+    if (!silent) opts.onVariant(cat, 0); // カテゴリ切替時は先頭を選択
+  }
 
   const selRow = document.createElement('div');
   selRow.className = 'btn-row sel-row hidden';
@@ -215,7 +225,7 @@ export function createUI(opts) {
   hint.className = 'hint';
   hint.textContent = '地面をタップで設置 / 置いた物をタップで選択';
 
-  placePanel.append(paletteRow, houseRow, selRow, hint);
+  placePanel.append(paletteRow, variantRow, selRow, hint);
 
   // ===== トースト =====
   const toastEl = document.createElement('div');
@@ -256,7 +266,7 @@ export function createUI(opts) {
   setActive(toolBtns, 'tool', 'raise');
   setActive(matBtns, 'mat', 'grass');
   setActive(palBtns, 'pal', 'tree');
-  setActive(houseBtns, 'house', '0');
+  populateVariants('tree', true);
   modeBtns.forEach((b) => b.classList.toggle('active', b.dataset.mode === 'camera'));
   editPanel.classList.add('hidden');
   placePanel.classList.add('hidden');

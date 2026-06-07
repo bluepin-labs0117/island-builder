@@ -12,6 +12,7 @@ import { createControls } from './controls.js';
 import { createTerrainEditor } from './terrainEditor.js';
 import { createObjects } from './objects.js';
 import { createBuildingKit } from './buildingKit.js';
+import { createNatureKit, NATURE_KINDS } from './natureKit.js';
 import { createFluid } from './fluid.js';
 import { createPlaceEditor } from './placeEditor.js';
 import { createUI } from './ui.js';
@@ -45,13 +46,18 @@ function init() {
 
   // 建物キット（glTFの家プレハブ）。非同期ロード、完了したら実モデルへ差し替え。
   const buildingKit = createBuildingKit();
+  // 自然キット（木・岩。共有アトラス1枚で軽量）。遅延ロード。
+  const natureKit = createNatureKit();
 
   // 設置オブジェクト
-  const objects = createObjects({ scene, terrain, buildingKit });
+  const objects = createObjects({ scene, terrain, buildingKit, natureKit });
 
   buildingKit.ready
     .then(() => objects.reground()) // ロード完了でフォールバックの箱を実モデルへ
     .catch((e) => console.error('[buildingKit] 準備に失敗:', e));
+  natureKit.ready
+    .then(() => objects.reground()) // 木・岩のジオメトリ準備後に描画
+    .catch((e) => console.error('[natureKit] 準備に失敗:', e));
 
   // 流体（水源から流れる水）
   const fluid = createFluid({ scene, terrain });
@@ -106,8 +112,9 @@ function init() {
     onRadius: (v) => editor.setRadius(v),
     onStrength: (v) => editor.setStrength(v),
     onPaintMaterial: (name) => terrain.setPaintMaterial(PAINT_IDS[name]),
+    natureKinds: NATURE_KINDS,
     onPalette: (t) => place.setPalette(t),
-    onHouseVariant: (i) => place.setHouseVariant(i),
+    onVariant: (cat, i) => place.setVariant(cat, i),
     onRotateHouse: () => place.rotatePlacement(),
     onRotate: () => place.rotateSelected(),
     onDelete: () => place.deleteSelected(),
@@ -127,6 +134,7 @@ function init() {
     objects,
     scene,
     ui,
+    natureKit,
   });
 
   function applyMode(m) {

@@ -28,13 +28,16 @@ const GRASS = new THREE.Color(0x6fb04a);
 const ROCK = new THREE.Color(0x8a7b63);
 const ROCK_DARK = new THREE.Color(0x5f564a);
 const SNOW = new THREE.Color(0xeef2f6);
+// 道：土の道（茶）と石畳（灰）
+const PATH = new THREE.Color(0x8c6b46);
+const COBBLE = new THREE.Color(0x9b958c);
 
 // 浅瀬は明るい水色、深いほど濃い青（深さで色が変わる）
 const WATER_SHALLOW = new THREE.Color(0x9fe3ea);
 const WATER_DEEP = new THREE.Color(0x0f4f74);
 
-const PAINT = { 1: GRASS, 2: SAND, 3: ROCK, 4: SNOW };
-export const PAINT_IDS = { grass: 1, sand: 2, rock: 3, snow: 4 };
+const PAINT = { 1: GRASS, 2: SAND, 3: ROCK, 4: SNOW, 5: PATH, 6: COBBLE };
+export const PAINT_IDS = { grass: 1, sand: 2, rock: 3, snow: 4, path: 5, cobble: 6 };
 
 export function createTerrain() {
   const verts = SEG + 1;

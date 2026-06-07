@@ -21,15 +21,20 @@ const PLACE_MIN_Y = -0.15; // 砂浜ぎりぎりまでは許可（少しだけ�
  * @param {THREE.Scene} deps.scene
  * @param {object} deps.ui - createUI() の戻り値（setSelected/toast を使う）
  */
-export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) {
+export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui, natureKit }) {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
 
   let mode = 'camera';
-  let palette = 'tree';
-  let houseVariant = 0;
+  let palette = 'tree'; // カテゴリ: 'tree' | 'rock' | 'house'
+  const variantOf = { tree: 0, rock: 0, house: 0 }; // カテゴリごとの選択中バリアント
   let placeRotY = 0; // 設置時の向き（家用、90度ずつ）
   let selected = null; // {type,index}
+
+  function currentNatureId() {
+    const list = natureKit.kinds.filter((k) => k.cat === palette);
+    return (list[variantOf[palette]] || list[0]).id;
+  }
 
   let down = null; // {id,x,y,t,moved}
   let multi = false;
@@ -109,13 +114,10 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
         return;
       }
 
-      const ok = objects.place(
-        palette,
-        p.x,
-        p.z,
-        palette === 'house' ? houseVariant : 0,
-        palette === 'house' ? placeRotY : 0
-      );
+      const ok =
+        palette === 'house'
+          ? objects.place('house', p.x, p.z, variantOf.house, placeRotY)
+          : objects.place(currentNatureId(), p.x, p.z); // 木・岩はランダム回転
       if (!ok) {
         ui.toast(`設置できる数の上限（${objects.MAX}個）に達しました`);
         return;
@@ -187,8 +189,8 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
     palette = type;
   }
 
-  function setHouseVariant(i) {
-    houseVariant = i | 0;
+  function setVariant(cat, i) {
+    if (cat in variantOf) variantOf[cat] = i | 0;
   }
 
   // 設置時の向きを90度ずつ回す。家が選択中ならその家を90度回す。
@@ -218,7 +220,7 @@ export function createPlaceEditor({ camera, dom, terrain, objects, scene, ui }) 
   return {
     setMode,
     setPalette,
-    setHouseVariant,
+    setVariant,
     rotatePlacement,
     rotateSelected,
     deleteSelected,
