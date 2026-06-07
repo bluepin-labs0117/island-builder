@@ -50,12 +50,12 @@ const SPECS = [
     roofY: WALL_H,
   },
   {
-    id: 'plaster_house',
+    id: 'tudor_house',
     scale: 0.28,
     hx: 2,
     hz: 2,
     floor: 'Floor_UnevenBrick',
-    wall: 'Wall_Plaster_Straight',
+    wall: 'Wall_Plaster_WoodGrid', // ハーフティンバー（木組み）で差別化
     door: 'Wall_Plaster_Door_Flat',
     window: 'Wall_Plaster_Window_Wide_Flat',
     roof: 'Roof_RoundTiles_4x4',
@@ -64,21 +64,21 @@ const SPECS = [
   },
 ];
 
+// 全プレハブ共通のディテール部品（開口インサート・装飾・足元）。原点が壁と共通なので
+// 壁と同じ pos/rotY で重ねるだけで正しく嵌る（キットのモジュール設計）。
+const DETAIL = {
+  windowInsert: 'Window_Wide_Flat1', // 木枠＋ガラス（窓開口に嵌る）
+  corner: 'Corner_Exterior_Wood', // 四隅の木柱
+  bottomCover: 'Wall_BottomCover', // 足元の木の土台ビーム
+  doorFrame: 'DoorFrame_Flat_WoodDark', // ドア枠
+  doorLeaf: 'Door_2_Flat', // 金具付きの木扉
+};
+
 export const HOUSE_VARIANTS = SPECS.map((s, i) => ({ index: i, id: s.id }));
 
-// 窓ガラス・ドア・内部コアの素材（全プレハブ・全クローンで共有＝軽い）。
-// ガラスは不透明の薄青（透明描画のコストを避けつつ「ガラス」に見せる）。
-// 内部コアは暗い不透明箱で、窓やドアの開口から向こうが透けるのを防ぐ。
+// 内部コアの素材（全プレハブ・全クローンで共有）。暗い不透明箱で、窓やドアの
+// 隙間から向こう側が透けて「空洞」に見えるのを防ぐ backdrop。
 const PRIM_MATS = {
-  glass: new THREE.MeshStandardMaterial({
-    color: 0x9ec3d6,
-    emissive: 0x21303a,
-    emissiveIntensity: 0.6,
-    roughness: 0.2,
-    metalness: 0.0,
-    side: THREE.DoubleSide,
-  }),
-  door: new THREE.MeshStandardMaterial({ color: 0x5a3d24, roughness: 0.85, metalness: 0.0 }),
   interior: new THREE.MeshStandardMaterial({ color: 0x231f18, roughness: 1.0, metalness: 0.0 }),
 };
 
@@ -99,31 +99,46 @@ function buildPlacements(spec) {
   // 床タイル
   for (const cz of sz) for (const cx of sx) P.push({ file: floor, pos: [cx, 0, cz], rotY: 0 });
 
-  // 周囲の壁（南=ドア、北/側面=窓）。開口には窓ガラス/ドア板を同じ位置・向きで重ねる。
+  // 壁を1枚置くたびに足元の木ビーム(BottomCover)も同じ位置・向きで重ねる
+  const addWall = (file, pos, rotY) => {
+    P.push({ file, pos, rotY });
+    P.push({ file: DETAIL.bottomCover, pos, rotY });
+  };
+
+  // 南：ドア壁＋ドア枠＋扉
   sx.forEach((cx, i) => {
     if (i === 0) {
-      P.push({ file: door, pos: [cx, 0, -hz], rotY: 0 });
-      P.push({ prim: 'door', pos: [cx, 0, -hz], rotY: 0 });
+      addWall(door, [cx, 0, -hz], 0);
+      P.push({ file: DETAIL.doorFrame, pos: [cx, 0, -hz], rotY: 0 });
+      P.push({ file: DETAIL.doorLeaf, pos: [cx - 0.515, 0, -hz - 0.05], rotY: 0 }); // 開口中央へ
     } else {
-      P.push({ file: wall, pos: [cx, 0, -hz], rotY: 0 });
+      addWall(wall, [cx, 0, -hz], 0);
     }
   });
+  // 北：窓壁＋窓インサート（木枠＋ガラス）
   sx.forEach((cx) => {
-    P.push({ file: win, pos: [cx, 0, hz], rotY: Math.PI });
-    P.push({ prim: 'glass', pos: [cx, 0, hz], rotY: Math.PI });
+    addWall(win, [cx, 0, hz], Math.PI);
+    P.push({ file: DETAIL.windowInsert, pos: [cx, 0, hz], rotY: Math.PI });
   });
+  // 西
   sz.forEach((cz, i) => {
     const isWin = i === 0;
-    P.push({ file: isWin ? win : wall, pos: [-hx, 0, cz], rotY: Math.PI / 2 });
-    if (isWin) P.push({ prim: 'glass', pos: [-hx, 0, cz], rotY: Math.PI / 2 });
+    addWall(isWin ? win : wall, [-hx, 0, cz], Math.PI / 2);
+    if (isWin) P.push({ file: DETAIL.windowInsert, pos: [-hx, 0, cz], rotY: Math.PI / 2 });
   });
+  // 東
   sz.forEach((cz, i) => {
     const isWin = i === 0;
-    P.push({ file: isWin ? win : wall, pos: [hx, 0, cz], rotY: -Math.PI / 2 });
-    if (isWin) P.push({ prim: 'glass', pos: [hx, 0, cz], rotY: -Math.PI / 2 });
+    addWall(isWin ? win : wall, [hx, 0, cz], -Math.PI / 2);
+    if (isWin) P.push({ file: DETAIL.windowInsert, pos: [hx, 0, cz], rotY: -Math.PI / 2 });
   });
 
-  // 内部コア：壁の少し内側に暗い不透明箱を入れ、開口から向こうが透けないようにする
+  // 四隅の木柱（ハーフティンバー風のアクセント）
+  for (const cxx of [-hx, hx]) for (const czz of [-hz, hz]) {
+    P.push({ file: DETAIL.corner, pos: [cxx, 0, czz], rotY: 0 });
+  }
+
+  // 内部コア：壁の内側に暗い不透明箱を入れ、開口から向こうが透けないようにする
   P.push({ prim: 'interior', size: [hx, hz] });
 
   // 屋根（壁の上に乗せる。サイズは footprint に合わせてスケール）
@@ -137,6 +152,7 @@ function neededFiles() {
   for (const s of SPECS) {
     for (const k of ['floor', 'wall', 'door', 'window', 'roof']) set.add(s[k]);
   }
+  for (const f of Object.values(DETAIL)) set.add(f);
   return [...set];
 }
 
@@ -160,6 +176,19 @@ function downscaleInPlace(tex) {
 function lightenMaterial(m) {
   if (!m || m.userData.__lit) return;
   m.userData.__lit = true;
+  // 窓ガラスは見やすい薄青の半透明に（キット既定は alpha0.1 で見えづらい）
+  if (/glass/i.test(m.name || '')) {
+    m.map = null;
+    m.color = new THREE.Color(0xa6cee0);
+    m.transparent = true;
+    m.opacity = 0.5;
+    m.roughness = 0.1;
+    m.metalness = 0.0;
+    m.side = THREE.DoubleSide;
+    m.depthWrite = false; // 透明の重なりを軽く
+    m.needsUpdate = true;
+    return;
+  }
   if (m.map) downscaleInPlace(m.map);
   m.normalMap = null;
   m.roughnessMap = null;
@@ -191,39 +220,23 @@ function sanitize(geo) {
   return geo;
 }
 
-// 開口を塞ぐ簡易ジオメトリ（窓ガラス/ドア板/内部コア）を家空間の座標で生成
+// 内部コア箱を家空間の座標で生成（窓枠の張り出しと干渉しないよう内側に収める）
 function makePrimGeo(pl) {
-  if (pl.prim === 'interior') {
-    const [hx, hz] = pl.size; // 壁の少し内側に収める
-    const geo = new THREE.BoxGeometry(
-      Math.max(0.3, 2 * (hx - 0.12)),
-      3.0,
-      Math.max(0.3, 2 * (hz - 0.12))
-    );
-    geo.translate(0, 1.55, 0);
-    return geo;
-  }
-  let geo;
-  if (pl.prim === 'glass') {
-    geo = new THREE.PlaneGeometry(1.3, 1.0);
-    geo.translate(0, 1.6, -0.08); // 壁の開口（やや外側）に配置
-  } else if (pl.prim === 'door') {
-    geo = new THREE.BoxGeometry(1.0, 2.05, 0.1);
-    geo.translate(0, 1.02, -0.08);
-  } else {
-    return null;
-  }
-  // 壁と同じ位置・向きへ
-  const t = new THREE.Vector3(pl.pos[0], pl.pos[1], pl.pos[2]);
-  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, pl.rotY, 0));
-  geo.applyMatrix4(new THREE.Matrix4().compose(t, q, new THREE.Vector3(1, 1, 1)));
+  if (pl.prim !== 'interior') return null;
+  const [hx, hz] = pl.size;
+  const geo = new THREE.BoxGeometry(
+    Math.max(0.3, 2 * (hx - 0.5)),
+    3.0,
+    Math.max(0.3, 2 * (hz - 0.5))
+  );
+  geo.translate(0, 1.55, 0);
   return geo;
 }
 
 // 仕様 + ロード済み部品 → 1つのプレハブ Group（マテリアル単位でマージ）
 function assemble(spec, cache) {
   const groups = new Map(); // materialName -> { material, geoms:[] }
-  const prims = { glass: [], door: [], interior: [] }; // 開口塞ぎ用
+  const interiorGeoms = []; // 内部コア
   const partM = new THREE.Matrix4();
   const _q = new THREE.Quaternion();
   const _e = new THREE.Euler();
@@ -233,7 +246,7 @@ function assemble(spec, cache) {
   for (const pl of buildPlacements(spec)) {
     if (pl.prim) {
       const geo = makePrimGeo(pl);
-      if (geo) prims[pl.prim].push(geo);
+      if (geo) interiorGeoms.push(geo);
       continue;
     }
     const part = cache[pl.file];
@@ -270,16 +283,15 @@ function assemble(spec, cache) {
     inner.add(mesh);
   }
 
-  // 開口塞ぎ（窓ガラス/ドア/内部コア）。同種はマージして1メッシュに。
-  for (const type of ['interior', 'door', 'glass']) {
-    const arr = prims[type];
-    if (!arr.length) continue;
-    const g = arr.length === 1 ? arr[0] : mergeGeometries(arr, false);
-    if (!g) continue;
-    const mesh = new THREE.Mesh(g, PRIM_MATS[type]);
-    mesh.castShadow = false; // 内側の補助なので影は省略（軽量化）
-    mesh.receiveShadow = type !== 'glass';
-    inner.add(mesh);
+  // 内部コア（暗い backdrop）。1メッシュにまとめる。
+  if (interiorGeoms.length) {
+    const g = interiorGeoms.length === 1 ? interiorGeoms[0] : mergeGeometries(interiorGeoms, false);
+    if (g) {
+      const mesh = new THREE.Mesh(g, PRIM_MATS.interior);
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      inner.add(mesh);
+    }
   }
 
   // 中心(XZ)を原点に、底面を y=0 に揃える
@@ -297,7 +309,12 @@ function assemble(spec, cache) {
     hx: Math.max(0.2, (fb.max.x - fb.min.x) / 2),
     hz: Math.max(0.2, (fb.max.z - fb.min.z) / 2),
   };
-  return { group: outer, footprint };
+  // 基礎(プリンス)用：屋根の張り出しを含まない壁の外周サイズ
+  const base = {
+    hx: (spec.hx + 0.18) * spec.scale,
+    hz: (spec.hz + 0.18) * spec.scale,
+  };
+  return { group: outer, footprint, base };
 }
 
 // 簡易フォールバック（実モデル読込前/失敗時の家）
@@ -330,6 +347,7 @@ export function createBuildingKit() {
   const fallback = makeFallback();
   const prefabs = SPECS.map(() => fallback); // 読込前はフォールバック
   const footprints = SPECS.map(() => fallback.footprint);
+  const bases = SPECS.map(() => ({ hx: 0.4, hz: 0.34 })); // 基礎プリンスのサイズ
 
   // 重いマップ（Normal/Roughness/ORM等）はダウンロードを省く
   const manager = new THREE.LoadingManager();
@@ -358,6 +376,7 @@ export function createBuildingKit() {
         if (built.group.children.length) {
           prefabs[i] = built;
           footprints[i] = built.footprint;
+          bases[i] = built.base;
         }
       } catch (e) {
         console.error('[buildingKit] 組み立て失敗:', spec.id, e);
@@ -372,5 +391,6 @@ export function createBuildingKit() {
     variants: HOUSE_VARIANTS,
     getPrefab: (i) => prefabs[Math.max(0, Math.min(prefabs.length - 1, i | 0))].group,
     getFootprint: (i) => footprints[Math.max(0, Math.min(footprints.length - 1, i | 0))],
+    getBaseFootprint: (i) => bases[Math.max(0, Math.min(bases.length - 1, i | 0))],
   };
 }

@@ -52,12 +52,13 @@ export function createObjects({ scene, terrain, buildingKit }) {
   houseContainer.name = 'houses';
   scene.add(houseContainer);
 
-  // 家の土台（基礎）：灰色の四角い柱を InstancedMesh で
-  const FOUND_CAP = MAX_OBJECTS * 4;
-  const pillarGeo = paint(new THREE.BoxGeometry(1, 1, 1), 0x9a9a9a);
+  // 家の土台（基礎）：家の底面形状に沿った石材プリンスを家1棟につき1個。
+  // 家の底と地面の隙間を埋めて接地させ、浮いて見えないようにする。
+  const FOUND_CAP = MAX_OBJECTS;
+  const pillarGeo = makeStoneBase(); // 単位ボックス（石の頂点カラー付き）
   const foundationMesh = new THREE.InstancedMesh(
     pillarGeo,
-    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true }),
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1.0, metalness: 0.0, flatShading: true }),
     FOUND_CAP
   );
   foundationMesh.count = 0;
@@ -125,38 +126,41 @@ export function createObjects({ scene, terrain, buildingKit }) {
     rebuildFoundations();
   }
 
-  // 家の四隅と真下の地面の隙間を、灰色の柱で埋める（footprint はバリアント依存）
+  // 家1棟につき石材プリンスを1個。家の底面サイズに合わせ、上端を家の底に、
+  // 下端を四隅と中心の地面の最低点まで伸ばして隙間を埋める（接地）。
   function rebuildFoundations() {
     const recs = records.house;
     let p = 0;
     for (const rec of recs) {
-      const fp = buildingKit.getFootprint(rec.variant || 0);
-      const hx = fp.hx * 0.82;
-      const hz = fp.hz * 0.82;
-      const pw = Math.min(hx, hz) * 0.6;
-      const corners = [
+      if (p >= FOUND_CAP) break;
+      const base = buildingKit.getBaseFootprint(rec.variant || 0);
+      const hx = base.hx;
+      const hz = base.hz;
+      const cos = Math.cos(rec.rotY);
+      const sin = Math.sin(rec.rotY);
+      const baseY = terrain.heightAt(rec.x, rec.z);
+      // 四隅＋中心で最も低い地面を探す
+      let minH = baseY;
+      for (const [lx, lz] of [
         [hx, hz],
         [hx, -hz],
         [-hx, hz],
         [-hx, -hz],
-      ];
-      const baseY = terrain.heightAt(rec.x, rec.z);
-      const cos = Math.cos(rec.rotY);
-      const sin = Math.sin(rec.rotY);
-      for (const [lx, lz] of corners) {
+        [0, 0],
+      ]) {
         const wx = rec.x + lx * cos - lz * sin;
         const wz = rec.z + lx * sin + lz * cos;
-        const gap = baseY - terrain.heightAt(wx, wz);
-        if (gap <= 0.05) continue;
-        const h = gap + 0.06;
-        _qY.setFromAxisAngle(_up, rec.rotY);
-        _pos.set(wx, baseY - h / 2, wz);
-        _scl.set(pw, h, pw);
-        _m.compose(_pos, _qY, _scl);
-        foundationMesh.setMatrixAt(p++, _m);
-        if (p >= FOUND_CAP) break;
+        const h = terrain.heightAt(wx, wz);
+        if (h < minH) minH = h;
       }
-      if (p >= FOUND_CAP) break;
+      const top = baseY + 0.03; // 家の底をわずかに覆う段
+      const bottom = minH - 0.06;
+      const height = Math.max(0.1, top - bottom); // 平地でも薄い石の基礎段を残す
+      _qY.setFromAxisAngle(_up, rec.rotY);
+      _pos.set(rec.x, top - height / 2, rec.z);
+      _scl.set(2 * hx, height, 2 * hz);
+      _m.compose(_pos, _qY, _scl);
+      foundationMesh.setMatrixAt(p++, _m);
     }
     foundationMesh.count = p;
     foundationMesh.instanceMatrix.needsUpdate = true;
@@ -344,6 +348,26 @@ function makeTree() {
   const leaves = paint(new THREE.ConeGeometry(0.6, 1.3, 7), 0x4f9e3a);
   leaves.translate(0, 1.35, 0);
   return mergeGeometries([trunk, leaves]);
+}
+
+// 基礎用の石ブロック：中心原点の単位ボックスに石色の頂点カラー（下を暗く・ムラ）を付け、
+// flatShading と合わせて素朴な石積みのように見せる。
+function makeStoneBase() {
+  const g = new THREE.BoxGeometry(1, 1, 1, 2, 1, 2);
+  const pos = g.attributes.position;
+  const light = new THREE.Color(0x8a7f70);
+  const dark = new THREE.Color(0x564e43);
+  const arr = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    const y = pos.getY(i); // -0.5..0.5
+    const n = 0.5 + 0.5 * Math.sin(pos.getX(i) * 23.1 + pos.getZ(i) * 17.7 + y * 13.0);
+    const t = Math.min(1, Math.max(0, (y + 0.5) * 0.65 + n * 0.35));
+    arr[i * 3] = lerpN(dark.r, light.r, t);
+    arr[i * 3 + 1] = lerpN(dark.g, light.g, t);
+    arr[i * 3 + 2] = lerpN(dark.b, light.b, t);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+  return g;
 }
 
 function round(v) {
